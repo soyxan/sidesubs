@@ -8,7 +8,7 @@
   <style>
     :root { color-scheme: dark; }
     * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; background: #000; color: #fff; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { margin: 0; min-height: 100vh; background: #000; color: #fff; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; overflow: hidden; }
     main { width: min(900px, 100%); min-height: 100vh; margin: 0 auto; padding: max(24px, env(safe-area-inset-top)) 22px max(24px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; justify-content: center; gap: 26px; }
     #title, #meta, #status, #current, #next { text-align: center; }
     #title { font-size: 18px; font-weight: 700; }
@@ -17,44 +17,64 @@
     #next { font-size: clamp(20px, 5vw, 36px); line-height: 1.25; opacity: .40; white-space: pre-line; text-wrap: balance; }
     #status { min-height: 18px; font-size: 13px; opacity: .42; }
     .error { font-size: 22px !important; color: #ffb1b1; }
-    #cinemaButton {
+
+    #controls {
       position: fixed;
-      top: max(12px, env(safe-area-inset-top));
-      right: 12px;
+      left: 50%;
+      bottom: max(10px, env(safe-area-inset-bottom));
+      transform: translateX(-50%);
       z-index: 20;
-      border: 1px solid rgba(255,255,255,.22);
-      background: rgba(20,20,20,.72);
-      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px;
+      border: 1px solid rgba(255,255,255,.15);
       border-radius: 999px;
-      padding: 10px 14px;
-      font: inherit;
-      font-size: 14px;
-      cursor: pointer;
+      background: rgba(18,18,18,.74);
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
-      transition: opacity .25s ease;
+      transition: opacity .25s ease, transform .25s ease;
+      white-space: nowrap;
     }
-    #cinemaButton.dimmed { opacity: .18; }
+    #controls.hidden-controls {
+      opacity: .08;
+      transform: translateX(-50%) translateY(5px) scale(.96);
+    }
+    #controls button {
+      border: 0;
+      background: transparent;
+      color: #fff;
+      border-radius: 999px;
+      min-width: 34px;
+      height: 34px;
+      padding: 0 9px;
+      font: inherit;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    #controls button:active { background: rgba(255,255,255,.14); }
+    #delayValue { min-width: 44px; text-align: center; font-size: 12px; opacity: .78; }
+    #divider { width: 1px; height: 18px; background: rgba(255,255,255,.14); }
+
     #cinemaNotice {
       position: fixed;
       left: 50%;
-      bottom: max(14px, env(safe-area-inset-bottom));
+      bottom: calc(max(10px, env(safe-area-inset-bottom)) + 50px);
       transform: translateX(-50%);
       max-width: min(92vw, 620px);
-      padding: 9px 13px;
+      padding: 8px 12px;
       border-radius: 12px;
-      background: rgba(20,20,20,.78);
-      font-size: 13px;
+      background: rgba(20,20,20,.82);
+      font-size: 12px;
       text-align: center;
       opacity: 0;
       pointer-events: none;
       transition: opacity .25s ease;
     }
-    #cinemaNotice.show { opacity: .78; }
+    #cinemaNotice.show { opacity: .82; }
   </style>
 </head>
 <body>
-<button id="cinemaButton" type="button">▶ Modo cine</button>
 <div id="cinemaNotice"></div>
 <main>
   <div id="title">Conectando con Plex…</div>
@@ -63,12 +83,25 @@
   <div id="next"></div>
   <div id="status"></div>
 </main>
+
+<div id="controls">
+  <button id="cinemaButton" type="button" title="Modo cine">▶ Cine</button>
+  <div id="divider"></div>
+  <button id="delayMinus" type="button" title="Reducir retardo">−</button>
+  <span id="delayValue">1.0 s</span>
+  <button id="delayPlus" type="button" title="Aumentar retardo">+</button>
+</div>
+
 <script>
   const el = id => document.getElementById(id);
   let pollMs = 750;
   let wakeLock = null;
   let cinemaEnabled = false;
-  let buttonDimTimer = null;
+  let controlsTimer = null;
+  let subtitleDelayMs = Number(localStorage.getItem("subtitleDelayMs") || 1000);
+  let delayedQueue = [];
+
+  subtitleDelayMs = Math.max(0, Math.min(5000, subtitleDelayMs));
 
   function formatTime(seconds) {
     seconds = Math.max(0, Math.floor(seconds || 0));
@@ -78,51 +111,61 @@
     return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   }
 
+  function updateDelayLabel() {
+    el("delayValue").textContent = `${(subtitleDelayMs / 1000).toFixed(1)} s`;
+  }
+
+  function setDelay(value) {
+    subtitleDelayMs = Math.max(0, Math.min(5000, value));
+    localStorage.setItem("subtitleDelayMs", String(subtitleDelayMs));
+    delayedQueue = [];
+    updateDelayLabel();
+    notice(`Retardo: ${(subtitleDelayMs / 1000).toFixed(1)} s`);
+    showControls();
+  }
+
   function notice(message) {
     const node = el("cinemaNotice");
     node.textContent = message;
     node.classList.add("show");
-    window.setTimeout(() => node.classList.remove("show"), 3500);
+    window.clearTimeout(node._timer);
+    node._timer = window.setTimeout(() => node.classList.remove("show"), 2600);
   }
 
-  function scheduleButtonDim() {
-    window.clearTimeout(buttonDimTimer);
-    el("cinemaButton").classList.remove("dimmed");
-    if (cinemaEnabled) {
-      buttonDimTimer = window.setTimeout(() => el("cinemaButton").classList.add("dimmed"), 2500);
-    }
+  function showControls() {
+    window.clearTimeout(controlsTimer);
+    el("controls").classList.remove("hidden-controls");
+    controlsTimer = window.setTimeout(() => el("controls").classList.add("hidden-controls"), 2800);
   }
 
   async function requestWakeLock() {
     if (!("wakeLock" in navigator)) {
       notice(window.isSecureContext
-        ? "Mantener pantalla activa no está disponible en este navegador"
-        : "Wake Lock requiere HTTPS en este navegador");
+        ? "Mantener pantalla activa no está disponible"
+        : "Wake Lock requiere HTTPS");
       return false;
     }
-
     try {
       wakeLock = await navigator.wakeLock.request("screen");
       wakeLock.addEventListener("release", () => { wakeLock = null; });
       return true;
     } catch (error) {
-      notice(`No se pudo mantener la pantalla activa: ${error.name}`);
+      notice(`Wake Lock: ${error.name}`);
       return false;
     }
   }
 
   async function enterFullscreen() {
     if (document.fullscreenElement) return true;
-    const target = document.documentElement;
-    if (!target.requestFullscreen) {
-      notice("Pantalla completa no está disponible en este navegador");
+    if (!document.documentElement.requestFullscreen) {
+      notice("Pantalla completa no disponible");
       return false;
     }
     try {
-      await target.requestFullscreen({ navigationUI: "hide" });
+      await document.documentElement.requestFullscreen({ navigationUI: "hide" });
       return true;
     } catch (error) {
-      notice(`No se pudo activar pantalla completa: ${error.name}`);
+      notice(`Fullscreen: ${error.name}`);
       return false;
     }
   }
@@ -136,41 +179,49 @@
     if (document.fullscreenElement && document.exitFullscreen) {
       try { await document.exitFullscreen(); } catch (_) {}
     }
-    el("cinemaButton").textContent = "▶ Modo cine";
-    el("cinemaButton").classList.remove("dimmed");
+    el("cinemaButton").textContent = "▶ Cine";
+    showControls();
   }
 
   async function enterCinemaMode() {
     cinemaEnabled = true;
     const fullscreenOk = await enterFullscreen();
     const wakeOk = await requestWakeLock();
-    el("cinemaButton").textContent = "✕ Salir cine";
-    scheduleButtonDim();
-
-    if (fullscreenOk && wakeOk) notice("Modo cine activo · pantalla completa + pantalla despierta");
-    else if (fullscreenOk) notice("Modo cine activo · pantalla completa (wake lock no disponible)");
-    else if (wakeOk) notice("Modo cine activo · pantalla despierta (sin fullscreen)");
+    el("cinemaButton").textContent = "✕ Cine";
+    showControls();
+    if (fullscreenOk && wakeOk) notice("Modo cine activo");
+    else if (fullscreenOk) notice("Fullscreen activo · Wake Lock no disponible");
+    else if (wakeOk) notice("Pantalla despierta · sin fullscreen");
   }
 
-  el("cinemaButton").addEventListener("click", async () => {
+  el("cinemaButton").addEventListener("click", async event => {
+    event.stopPropagation();
     if (cinemaEnabled) await exitCinemaMode();
     else await enterCinemaMode();
   });
 
-  ["pointerdown", "touchstart"].forEach(eventName => {
-    document.addEventListener(eventName, scheduleButtonDim, { passive: true });
+  el("delayMinus").addEventListener("click", event => {
+    event.stopPropagation();
+    setDelay(subtitleDelayMs - 250);
   });
+
+  el("delayPlus").addEventListener("click", event => {
+    event.stopPropagation();
+    setDelay(subtitleDelayMs + 250);
+  });
+
+  document.addEventListener("pointerdown", showControls, { passive: true });
 
   document.addEventListener("visibilitychange", async () => {
     if (cinemaEnabled && document.visibilityState === "visible" && !wakeLock) {
       await requestWakeLock();
-      scheduleButtonDim();
+      showControls();
     }
   });
 
   document.addEventListener("fullscreenchange", () => {
     if (cinemaEnabled && !document.fullscreenElement) {
-      notice("Has salido de pantalla completa; el modo cine sigue intentando mantener la pantalla activa");
+      notice("Fullscreen desactivado · Wake Lock sigue activo si es posible");
     }
   });
 
@@ -189,7 +240,7 @@
     if (!data.media_found) {
       el("current").textContent = "No puedo acceder al archivo de vídeo";
       el("next").textContent = "";
-      el("status").textContent = "Revisa PLEX_MEDIA_ROOT y MEDIA_PATH";
+      el("status").textContent = "Revisa la ruta de medios";
       return;
     }
 
@@ -205,6 +256,26 @@
     el("status").textContent = "✓ Sincronizado";
   }
 
+  function enqueueForDelayedRender(data) {
+    const now = performance.now();
+    delayedQueue.push({ due: now + subtitleDelayMs, data });
+
+    while (delayedQueue.length > 1 && delayedQueue[1].due <= now) {
+      delayedQueue.shift();
+    }
+
+    if (subtitleDelayMs === 0) {
+      data.active ? renderActive(data) : renderIdle();
+      delayedQueue = [];
+      return;
+    }
+
+    if (delayedQueue.length && delayedQueue[0].due <= now) {
+      const item = delayedQueue.shift();
+      item.data.active ? renderActive(item.data) : renderIdle();
+    }
+  }
+
   async function refresh() {
     try {
       const response = await fetch("/api/status", { cache: "no-store" });
@@ -212,7 +283,7 @@
       el("current").classList.remove("error");
       if (!data.ok) throw new Error(data.error || "Error desconocido");
       pollMs = data.poll_interval_ms || pollMs;
-      data.active ? renderActive(data) : renderIdle();
+      enqueueForDelayedRender(data);
     } catch (error) {
       el("title").textContent = "Error";
       el("meta").textContent = "";
@@ -225,6 +296,8 @@
     }
   }
 
+  updateDelayLabel();
+  showControls();
   refresh();
 </script>
 </body>
