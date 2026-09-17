@@ -17,9 +17,45 @@
     #next { font-size: clamp(20px, 5vw, 36px); line-height: 1.25; opacity: .40; white-space: pre-line; text-wrap: balance; }
     #status { min-height: 18px; font-size: 13px; opacity: .42; }
     .error { font-size: 22px !important; color: #ffb1b1; }
+    #cinemaButton {
+      position: fixed;
+      top: max(12px, env(safe-area-inset-top));
+      right: 12px;
+      z-index: 20;
+      border: 1px solid rgba(255,255,255,.22);
+      background: rgba(20,20,20,.72);
+      color: #fff;
+      border-radius: 999px;
+      padding: 10px 14px;
+      font: inherit;
+      font-size: 14px;
+      cursor: pointer;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      transition: opacity .25s ease;
+    }
+    #cinemaButton.dimmed { opacity: .18; }
+    #cinemaNotice {
+      position: fixed;
+      left: 50%;
+      bottom: max(14px, env(safe-area-inset-bottom));
+      transform: translateX(-50%);
+      max-width: min(92vw, 620px);
+      padding: 9px 13px;
+      border-radius: 12px;
+      background: rgba(20,20,20,.78);
+      font-size: 13px;
+      text-align: center;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .25s ease;
+    }
+    #cinemaNotice.show { opacity: .78; }
   </style>
 </head>
 <body>
+<button id="cinemaButton" type="button">▶ Modo cine</button>
+<div id="cinemaNotice"></div>
 <main>
   <div id="title">Conectando con Plex…</div>
   <div id="meta"></div>
@@ -30,6 +66,9 @@
 <script>
   const el = id => document.getElementById(id);
   let pollMs = 750;
+  let wakeLock = null;
+  let cinemaEnabled = false;
+  let buttonDimTimer = null;
 
   function formatTime(seconds) {
     seconds = Math.max(0, Math.floor(seconds || 0));
@@ -38,6 +77,102 @@
     const s = seconds % 60;
     return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   }
+
+  function notice(message) {
+    const node = el("cinemaNotice");
+    node.textContent = message;
+    node.classList.add("show");
+    window.setTimeout(() => node.classList.remove("show"), 3500);
+  }
+
+  function scheduleButtonDim() {
+    window.clearTimeout(buttonDimTimer);
+    el("cinemaButton").classList.remove("dimmed");
+    if (cinemaEnabled) {
+      buttonDimTimer = window.setTimeout(() => el("cinemaButton").classList.add("dimmed"), 2500);
+    }
+  }
+
+  async function requestWakeLock() {
+    if (!("wakeLock" in navigator)) {
+      notice(window.isSecureContext
+        ? "Mantener pantalla activa no está disponible en este navegador"
+        : "Wake Lock requiere HTTPS en este navegador");
+      return false;
+    }
+
+    try {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; });
+      return true;
+    } catch (error) {
+      notice(`No se pudo mantener la pantalla activa: ${error.name}`);
+      return false;
+    }
+  }
+
+  async function enterFullscreen() {
+    if (document.fullscreenElement) return true;
+    const target = document.documentElement;
+    if (!target.requestFullscreen) {
+      notice("Pantalla completa no está disponible en este navegador");
+      return false;
+    }
+    try {
+      await target.requestFullscreen({ navigationUI: "hide" });
+      return true;
+    } catch (error) {
+      notice(`No se pudo activar pantalla completa: ${error.name}`);
+      return false;
+    }
+  }
+
+  async function exitCinemaMode() {
+    cinemaEnabled = false;
+    if (wakeLock) {
+      try { await wakeLock.release(); } catch (_) {}
+      wakeLock = null;
+    }
+    if (document.fullscreenElement && document.exitFullscreen) {
+      try { await document.exitFullscreen(); } catch (_) {}
+    }
+    el("cinemaButton").textContent = "▶ Modo cine";
+    el("cinemaButton").classList.remove("dimmed");
+  }
+
+  async function enterCinemaMode() {
+    cinemaEnabled = true;
+    const fullscreenOk = await enterFullscreen();
+    const wakeOk = await requestWakeLock();
+    el("cinemaButton").textContent = "✕ Salir cine";
+    scheduleButtonDim();
+
+    if (fullscreenOk && wakeOk) notice("Modo cine activo · pantalla completa + pantalla despierta");
+    else if (fullscreenOk) notice("Modo cine activo · pantalla completa (wake lock no disponible)");
+    else if (wakeOk) notice("Modo cine activo · pantalla despierta (sin fullscreen)");
+  }
+
+  el("cinemaButton").addEventListener("click", async () => {
+    if (cinemaEnabled) await exitCinemaMode();
+    else await enterCinemaMode();
+  });
+
+  ["pointerdown", "touchstart"].forEach(eventName => {
+    document.addEventListener(eventName, scheduleButtonDim, { passive: true });
+  });
+
+  document.addEventListener("visibilitychange", async () => {
+    if (cinemaEnabled && document.visibilityState === "visible" && !wakeLock) {
+      await requestWakeLock();
+      scheduleButtonDim();
+    }
+  });
+
+  document.addEventListener("fullscreenchange", () => {
+    if (cinemaEnabled && !document.fullscreenElement) {
+      notice("Has salido de pantalla completa; el modo cine sigue intentando mantener la pantalla activa");
+    }
+  });
 
   function renderIdle() {
     el("title").textContent = "Sin reproducción activa";
@@ -59,9 +194,9 @@
     }
 
     if (!data.subtitle_found) {
-      el("current").textContent = "No encuentro el SRT español";
+      el("current").textContent = "No encuentro subtítulos españoles";
       el("next").textContent = "";
-      el("status").textContent = "El subtítulo debe estar junto al vídeo";
+      el("status").textContent = data.subtitle_error || "No se ha encontrado una pista compatible";
       return;
     }
 
