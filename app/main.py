@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import html
+import json
 import logging
 import os
 import re
+import subprocess
 from bisect import bisect_right
 from dataclasses import dataclass
 from functools import lru_cache
@@ -68,6 +70,9 @@ SPANISH_SUFFIXES = (
     ".español.srt",
     ".castellano.srt",
 )
+SPANISH_LANGS = {"es", "spa", "esp", "es-es", "es_419"}
+SPANISH_TITLE_WORDS = ("spanish", "español", "espanol", "castellano")
+TEXT_SUBTITLE_CODECS = {"subrip", "srt", "ass", "ssa", "webvtt", "mov_text"}
 
 TAG_RE = re.compile(r"<[^>]+>")
 ASS_OVERRIDE_RE = re.compile(r"\{\\[^}]*\}")
@@ -132,19 +137,6 @@ def session_player_fields(session) -> tuple[str, str, str, str]:
     )
 
 
-def serialize_session(session) -> dict:
-    client, product, device, state = session_player_fields(session)
-    return {
-        "client": client or None,
-        "product": product or None,
-        "device": device or None,
-        "state": state,
-        "title": display_title(session),
-        "position": int(getattr(session, "viewOffset", 0) or 0) / 1000,
-        "rating_key": str(getattr(session, "ratingKey", "") or "") or None,
-    }
-
-
 def select_session(sessions: Iterable):
     items = list(sessions)
     if not items:
@@ -193,8 +185,10 @@ def subtitle_candidates(media_file: Path) -> list[Path]:
     media_stem = media_file.stem.casefold()
     return [
         path
-        for path in folder.glob("*.srt")
-        if path.name.casefold().startswith(media_stem)
+        for path in folder.iterdir()
+        if path.is_file()
+        and path.suffix.casefold() == ".srt"
+        and path.name.casefold().startswith(media_stem)
     ]
 
 
@@ -228,13 +222,10 @@ def clean_subtitle_text(value: str) -> str:
     return html.unescape(value).strip()
 
 
-@lru_cache(maxsize=32)
-def parse_srt_cached(path_string: str, mtime_ns: int) -> tuple[Cue, ...]:
-    del mtime_ns
-    text = Path(path_string).read_text(encoding="utf-8-sig", errors="replace")
+def parse_srt_text(text: str) -> tuple[Cue, ...]:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-
     cues: list[Cue] = []
+
     for block in re.split(r"\n{2,}", text.strip()):
         lines = [line for line in block.splitlines() if line.strip()]
         timing_index = next((i for i, line in enumerate(lines) if "-->" in line), None)
@@ -251,13 +242,155 @@ def parse_srt_cached(path_string: str, mtime_ns: int) -> tuple[Cue, ...]:
             continue
 
     cues.sort(key=lambda cue: cue.start)
-    logger.info("Loaded %s subtitle cues from %s", len(cues), path_string)
     return tuple(cues)
+
+
+@lru_cache(maxsize=32)
+def parse_srt_cached(path_string: str, mtime_ns: int) -> tuple[Cue, ...]:
+    del mtime_ns
+    text = Path(path_string).read_text(encoding="utf-8-sig", errors="replace")
+    cues = parse_srt_text(text)
+    logger.info("Loaded %s subtitle cues from external SRT %s", len(cues), path_string)
+    return cues
 
 
 def load_cues(path: Path) -> tuple[Cue, ...]:
     stat = path.stat()
     return parse_srt_cached(str(path), stat.st_mtime_ns)
+
+
+@lru_cache(maxsize=32)
+def probe_subtitle_streams_cached(path_string: str, mtime_ns: int) -> tuple[dict, ...]:
+    del mtime_ns
+    command = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "s",
+        "-show_entries",
+        "stream=index,codec_name:stream_tags=language,title",
+        "-of",
+        "json",
+        path_string,
+    ]
+    completed = subprocess.run(command, capture_output=True, text=True, timeout=20, check=True)
+    payload = json.loads(completed.stdout or "{}")
+    streams = tuple(payload.get("streams", []) or [])
+    logger.info("Found %s embedded subtitle streams in %s", len(streams), path_string)
+    return streams
+
+
+def probe_subtitle_streams(media_file: Path) -> tuple[dict, ...]:
+    stat = media_file.stat()
+    return probe_subtitle_streams_cached(str(media_file), stat.st_mtime_ns)
+
+
+def subtitle_stream_summary(stream: dict) -> dict:
+    tags = stream.get("tags") or {}
+    return {
+        "index": stream.get("index"),
+        "codec": stream.get("codec_name"),
+        "language": tags.get("language"),
+        "title": tags.get("title"),
+    }
+
+
+def spanish_stream_score(stream: dict) -> int:
+    tags = stream.get("tags") or {}
+    language = str(tags.get("language") or "").casefold()
+    title = str(tags.get("title") or "").casefold()
+    codec = str(stream.get("codec_name") or "").casefold()
+
+    score = 0
+    if language in SPANISH_LANGS:
+        score += 100
+    if any(word in title for word in SPANISH_TITLE_WORDS):
+        score += 50
+    if codec in TEXT_SUBTITLE_CODECS:
+        score += 10
+    return score
+
+
+def select_spanish_embedded_stream(media_file: Path) -> dict | None:
+    streams = list(probe_subtitle_streams(media_file))
+    if not streams:
+        return None
+
+    ranked = sorted(streams, key=spanish_stream_score, reverse=True)
+    best = ranked[0]
+    return best if spanish_stream_score(best) >= 50 else None
+
+
+@lru_cache(maxsize=32)
+def extract_embedded_cues_cached(path_string: str, mtime_ns: int, stream_index: int) -> tuple[Cue, ...]:
+    del mtime_ns
+    command = [
+        "ffmpeg",
+        "-v",
+        "error",
+        "-i",
+        path_string,
+        "-map",
+        f"0:{stream_index}",
+        "-f",
+        "srt",
+        "-",
+    ]
+    completed = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    if completed.returncode != 0:
+        error = (completed.stderr or "").strip()
+        raise RuntimeError(f"Unable to convert embedded subtitle stream {stream_index} to SRT: {error}")
+
+    cues = parse_srt_text(completed.stdout)
+    logger.info(
+        "Loaded %s subtitle cues from embedded stream %s in %s",
+        len(cues),
+        stream_index,
+        path_string,
+    )
+    return cues
+
+
+def load_embedded_cues(media_file: Path, stream: dict) -> tuple[Cue, ...]:
+    stream_index = int(stream["index"])
+    stat = media_file.stat()
+    return extract_embedded_cues_cached(str(media_file), stat.st_mtime_ns, stream_index)
+
+
+def resolve_spanish_subtitles(media_file: Path) -> tuple[tuple[Cue, ...], dict]:
+    external = find_spanish_srt(media_file)
+    if external and external.is_file():
+        return load_cues(external), {
+            "source": "external_srt",
+            "path": str(external),
+            "stream": None,
+        }
+
+    stream = select_spanish_embedded_stream(media_file)
+    if stream is None:
+        return (), {"source": None, "path": None, "stream": None}
+
+    codec = str(stream.get("codec_name") or "").casefold()
+    metadata = {
+        "source": "embedded",
+        "path": str(media_file),
+        "stream": subtitle_stream_summary(stream),
+    }
+
+    if codec not in TEXT_SUBTITLE_CODECS:
+        metadata["error"] = (
+            f"Embedded Spanish subtitle codec '{codec}' is image-based or unsupported; "
+            "it cannot be converted to text automatically."
+        )
+        return (), metadata
+
+    try:
+        return load_embedded_cues(media_file, stream), metadata
+    except Exception as exc:
+        metadata["error"] = str(exc)
+        logger.warning("Embedded subtitle extraction failed: %s", exc)
+        return (), metadata
 
 
 def cue_pair(cues: tuple[Cue, ...], position: float) -> tuple[Cue | None, Cue | None]:
@@ -301,6 +434,19 @@ def display_title(session) -> str:
     return title or "Plex"
 
 
+def serialize_session(session) -> dict:
+    client, product, device, state = session_player_fields(session)
+    return {
+        "client": client or None,
+        "product": product or None,
+        "device": device or None,
+        "state": state,
+        "title": display_title(session),
+        "position": int(getattr(session, "viewOffset", 0) or 0) / 1000,
+        "rating_key": str(getattr(session, "ratingKey", "") or "") or None,
+    }
+
+
 def build_diagnostics() -> dict:
     cfg = settings()
     result = {
@@ -318,8 +464,12 @@ def build_diagnostics() -> dict:
         "container_media_path": None,
         "media_exists": False,
         "subtitle_candidates": [],
+        "embedded_subtitles": [],
+        "selected_subtitle_source": None,
+        "selected_subtitle_stream": None,
         "subtitle_path": None,
         "subtitle_found": False,
+        "subtitle_error": None,
     }
 
     plex = plex_server()
@@ -347,12 +497,25 @@ def build_diagnostics() -> dict:
     media_path = map_media_path(plex_media_path)
     result["container_media_path"] = str(media_path)
     result["media_exists"] = media_path.is_file()
+    if not media_path.is_file():
+        return result
 
     candidates = subtitle_candidates(media_path)
     result["subtitle_candidates"] = [str(path) for path in candidates]
-    subtitle_path = find_spanish_srt(media_path)
-    result["subtitle_path"] = str(subtitle_path) if subtitle_path else None
-    result["subtitle_found"] = bool(subtitle_path and subtitle_path.is_file())
+
+    try:
+        embedded = probe_subtitle_streams(media_path)
+        result["embedded_subtitles"] = [subtitle_stream_summary(stream) for stream in embedded]
+    except Exception as exc:
+        result["subtitle_error"] = f"ffprobe failed: {exc}"
+        return result
+
+    cues, metadata = resolve_spanish_subtitles(media_path)
+    result["selected_subtitle_source"] = metadata.get("source")
+    result["selected_subtitle_stream"] = metadata.get("stream")
+    result["subtitle_path"] = metadata.get("path")
+    result["subtitle_error"] = metadata.get("error")
+    result["subtitle_found"] = bool(cues)
     return result
 
 
@@ -396,21 +559,30 @@ def status():
 
         plex_media_path = media_file_from_session(session)
         media_path = map_media_path(plex_media_path) if plex_media_path else None
-        subtitle_path = find_spanish_srt(media_path) if media_path else None
+
+        current = next_cue = None
+        subtitle_found = False
+        subtitle_source = None
+        subtitle_error = None
+
+        if media_path and media_path.is_file():
+            cues, metadata = resolve_spanish_subtitles(media_path)
+            subtitle_source = metadata.get("source")
+            subtitle_error = metadata.get("error")
+            subtitle_found = bool(cues)
+            if cues:
+                current, next_cue = cue_pair(cues, position)
 
         logger.debug(
-            "Session client=%s state=%s position=%.3fs plex_media=%s mapped_media=%s subtitle=%s",
+            "Session client=%s state=%s position=%.3fs plex_media=%s mapped_media=%s subtitle_source=%s subtitle_error=%s",
             client or product or device or "Plex",
             state,
             position,
             plex_media_path,
             media_path,
-            subtitle_path,
+            subtitle_source,
+            subtitle_error,
         )
-
-        current = next_cue = None
-        if subtitle_path and subtitle_path.is_file():
-            current, next_cue = cue_pair(load_cues(subtitle_path), position)
 
         return {
             "ok": True,
@@ -420,7 +592,9 @@ def status():
             "client": client or product or device or "Plex",
             "position": position,
             "media_found": bool(media_path and media_path.is_file()),
-            "subtitle_found": bool(subtitle_path and subtitle_path.is_file()),
+            "subtitle_found": subtitle_found,
+            "subtitle_source": subtitle_source,
+            "subtitle_error": subtitle_error,
             "current": serialize_cue(current),
             "next": serialize_cue(next_cue),
             "poll_interval_ms": settings().poll_interval_ms,
