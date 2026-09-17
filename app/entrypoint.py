@@ -10,8 +10,10 @@ _original_select_session = main.select_session
 _lock = threading.Lock()
 _clocks: dict[str, dict[str, float | str]] = {}
 
-# If Plex's reported position differs from our local estimate by more than this,
-# treat it as a real seek/resync instead of normal coarse viewOffset updates.
+# Ignore tiny changes in Plex's reported viewOffset. A real seek is detected from
+# a meaningful change in Plex's raw value, not merely from the raw value becoming
+# stale compared with our locally interpolated clock.
+RAW_CHANGE_EPSILON_SECONDS = 0.20
 SEEK_THRESHOLD_SECONDS = 2.5
 
 
@@ -38,15 +40,17 @@ def _smooth_position(session) -> None:
     with _lock:
         previous = _clocks.get(key)
 
-        # Paused/stopped/buffering: Plex's value is authoritative and the local
-        # clock must not advance.
+        # Paused/stopped/buffering: Plex is authoritative and the local clock
+        # must not advance.
         if state != "playing":
+            position = raw_position
             _clocks[key] = {
-                "position": raw_position,
+                "position": position,
                 "raw_position": raw_position,
                 "time": now,
                 "state": state,
             }
+            session.viewOffset = int(position * 1000)
             return
 
         if previous is None or previous.get("state") != "playing":
@@ -54,15 +58,24 @@ def _smooth_position(session) -> None:
         else:
             elapsed = max(0.0, now - float(previous["time"]))
             predicted = float(previous["position"]) + elapsed
-            delta = raw_position - predicted
+            previous_raw = float(previous["raw_position"])
+            raw_change = raw_position - previous_raw
 
-            if abs(delta) >= SEEK_THRESHOLD_SECONDS:
-                # Genuine seek or a large resync from Plex.
+            if abs(raw_change) <= RAW_CHANGE_EPSILON_SECONDS:
+                # Plex is still returning the same stale viewOffset. Do NOT
+                # mistake the growing gap to the local clock for a backwards
+                # seek; simply keep the local clock moving forward.
+                position = predicted
+            elif raw_change < -SEEK_THRESHOLD_SECONDS:
+                # Plex's raw position genuinely moved backwards: real seek.
+                position = raw_position
+            elif raw_change > elapsed + SEEK_THRESHOLD_SECONDS:
+                # Plex jumped forward much farther than normal playback could
+                # have advanced since the previous request: real forward seek.
                 position = raw_position
             else:
-                # Plex often reports viewOffset in coarse/stale steps. Advance
-                # locally between reports and never snap backwards for a small
-                # amount of normal reporting jitter.
+                # Normal coarse Plex update catching up with playback. Never
+                # move backwards; use whichever position is farther ahead.
                 position = max(predicted, raw_position)
 
         _clocks[key] = {
@@ -73,7 +86,7 @@ def _smooth_position(session) -> None:
         }
 
     # main.status() reads viewOffset after select_session(), so replacing it here
-    # transparently gives the rest of the existing application a smooth clock.
+    # transparently gives the rest of the application the smoothed position.
     session.viewOffset = int(position * 1000)
 
 
