@@ -12,54 +12,78 @@ It is intentionally small:
 - External `.srt` files are read directly from the same media library.
 - Media is mounted read-only.
 
-## How it works
+## Docker image
 
-1. The app asks Plex for the active playback sessions.
-2. It prefers the configured client (for example `Samsung`).
-3. `python-plexapi` supplies the playback position and media metadata.
-4. The app maps Plex's media path to the `/media` Docker mount.
-5. It finds the Spanish external SRT next to the video.
-6. The SRT is cached and the current line is selected by playback time.
-7. Your phone polls the app and displays the current + next Spanish subtitle.
+Every push to `main` is built automatically by GitHub Actions and published to GitHub Container Registry:
 
-## Portainer + Git deployment
+```text
+ghcr.io/soyxan/plex-subtitles:latest
+```
 
-Create the stack from this Git repository and define these environment variables in Portainer:
+Each build also gets a commit-specific tag such as:
 
-| Variable | Example | Required |
-|---|---|---|
-| `PLEX_TOKEN` | `xxxxxxxx` | Yes |
-| `MEDIA_PATH` | `/mnt/media` | Yes |
-| `PLEX_MEDIA_ROOT` | `/mnt/media` | Usually |
-| `PLEX_URL` | `http://host.docker.internal:32400` | No |
-| `PLEX_CLIENT_FILTER` | `Samsung` | No |
-| `PORT` | `8085` | No |
-| `POLL_INTERVAL_MS` | `750` | No |
+```text
+ghcr.io/soyxan/plex-subtitles:sha-abc1234
+```
+
+That makes rollback easy if a future change causes a problem.
+
+## Portainer
+
+The included `docker-compose.yml` already uses the published GHCR image, so Portainer does not need to build anything locally.
+
+For the current setup, the important defaults are:
+
+```text
+MEDIA_PATH=/mnt/data/media
+PLEX_MEDIA_ROOT=/data/media
+PLEX_URL=http://host.docker.internal:32400
+PLEX_CLIENT_FILTER=Samsung
+PORT=8085
+```
+
+Only `PLEX_TOKEN` must be provided explicitly.
+
+Example stack:
+
+```yaml
+services:
+  plex-subtitles:
+    image: ghcr.io/soyxan/plex-subtitles:latest
+    container_name: plex-subtitles
+    restart: unless-stopped
+    ports:
+      - "8085:8000"
+    environment:
+      PLEX_URL: "http://host.docker.internal:32400"
+      PLEX_TOKEN: "${PLEX_TOKEN}"
+      PLEX_CLIENT_FILTER: "Samsung"
+      PLEX_MEDIA_ROOT: "/data/media"
+      CONTAINER_MEDIA_ROOT: "/data/media"
+      POLL_INTERVAL_MS: "750"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - /mnt/data/media:/data/media:ro
+```
 
 `PLEX_TOKEN` must **not** be committed to GitHub.
 
-Then deploy/redeploy the stack and open:
+Open the interface at:
 
 ```text
 http://YOUR-SERVER-IP:8085
 ```
 
-## Path mapping
+## How it works
 
-If Plex reports:
-
-```text
-/mnt/media/Series/Severance/Season 02/Episode.mkv
-```
-
-and the Docker host stores that directory under `/mnt/media`, use:
-
-```text
-MEDIA_PATH=/mnt/media
-PLEX_MEDIA_ROOT=/mnt/media
-```
-
-The container sees the file under `/media/...`.
+1. The app asks Plex for the active playback sessions.
+2. It prefers the configured client, for example `Samsung`.
+3. `python-plexapi` supplies playback position and media metadata.
+4. The app reads the matching media path from the read-only volume.
+5. It finds the Spanish external SRT next to the video.
+6. The SRT is cached and the current line is selected by playback time.
+7. Your phone polls the app and displays the current + next Spanish subtitle.
 
 ## Supported subtitle names
 
@@ -80,14 +104,6 @@ If only one matching external SRT exists, it is used as a fallback.
 ## Find your Plex token
 
 https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/
-
-## Local Docker Compose
-
-Copy `.env.example` to `.env`, edit the values and run:
-
-```bash
-docker compose up -d --build
-```
 
 ## Health check
 
