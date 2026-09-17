@@ -132,6 +132,19 @@ def session_player_fields(session) -> tuple[str, str, str, str]:
     )
 
 
+def serialize_session(session) -> dict:
+    client, product, device, state = session_player_fields(session)
+    return {
+        "client": client or None,
+        "product": product or None,
+        "device": device or None,
+        "state": state,
+        "title": display_title(session),
+        "position": int(getattr(session, "viewOffset", 0) or 0) / 1000,
+        "rating_key": str(getattr(session, "ratingKey", "") or "") or None,
+    }
+
+
 def select_session(sessions: Iterable):
     items = list(sessions)
     if not items:
@@ -297,6 +310,7 @@ def build_diagnostics() -> dict:
         "plex_server": None,
         "session_found": False,
         "session_count": 0,
+        "sessions": [],
         "selected_client": None,
         "state": None,
         "position": None,
@@ -314,6 +328,7 @@ def build_diagnostics() -> dict:
 
     sessions = list(plex.sessions())
     result["session_count"] = len(sessions)
+    result["sessions"] = [serialize_session(item) for item in sessions]
     session = select_session(sessions)
     if session is None:
         return result
