@@ -1,21 +1,22 @@
 services:
   plex-subtitles:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: plex-subtitles:local
+    image: ghcr.io/soyxan/plex-subtitles:latest
     container_name: plex-subtitles
     restart: unless-stopped
+
     ports:
       - "${PORT:-8085}:8000"
+
     environment:
       PLEX_URL: "${PLEX_URL:-http://host.docker.internal:32400}"
       PLEX_TOKEN: "${PLEX_TOKEN:?PLEX_TOKEN is required}"
       PLEX_CLIENT_FILTER: "${PLEX_CLIENT_FILTER:-Samsung}"
-      PLEX_MEDIA_ROOT: "${PLEX_MEDIA_ROOT:-/media}"
-      CONTAINER_MEDIA_ROOT: "/media"
+      PLEX_MEDIA_ROOT: "${PLEX_MEDIA_ROOT:-/data/media}"
+      CONTAINER_MEDIA_ROOT: "/data/media"
       POLL_INTERVAL_MS: "${POLL_INTERVAL_MS:-750}"
+
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
     volumes:
-      - "${MEDIA_PATH:?MEDIA_PATH is required}:/media:ro"
+      - "${MEDIA_PATH:-/mnt/data/media}:/data/media:ro"
