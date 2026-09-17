@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import contextvars
 import threading
 import time
+
+from fastapi import Request
 
 from app import main
 
@@ -9,25 +12,31 @@ from app import main
 _original_select_session = main.select_session
 _lock = threading.Lock()
 _clocks: dict[str, dict[str, float | str]] = {}
+_selected_player_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "selected_player_id",
+    default=None,
+)
 
-# Ignore tiny changes in Plex's reported viewOffset. A real seek is detected from
-# a meaningful change in Plex's raw value, not merely from the raw value becoming
-# stale compared with our locally interpolated clock.
 RAW_CHANGE_EPSILON_SECONDS = 0.20
 SEEK_THRESHOLD_SECONDS = 2.5
 
 
-def _session_key(session) -> str:
+def _player_id(session) -> str:
     player = getattr(session, "player", None)
-    player_id = (
-        getattr(player, "machineIdentifier", None)
-        or getattr(player, "title", None)
-        or getattr(player, "device", None)
-        or "unknown-player"
-    )
+    machine_id = getattr(player, "machineIdentifier", None)
+    if machine_id:
+        return str(machine_id)
+
+    title = getattr(player, "title", None) or ""
+    product = getattr(player, "product", None) or ""
+    device = getattr(player, "device", None) or ""
+    return f"fallback:{title}|{product}|{device}"
+
+
+def _session_key(session) -> str:
     rating_key = getattr(session, "ratingKey", None) or "unknown-media"
     session_key = getattr(session, "sessionKey", None) or ""
-    return f"{player_id}:{rating_key}:{session_key}"
+    return f"{_player_id(session)}:{rating_key}:{session_key}"
 
 
 def _smooth_position(session) -> None:
@@ -40,8 +49,6 @@ def _smooth_position(session) -> None:
     with _lock:
         previous = _clocks.get(key)
 
-        # Paused/stopped/buffering: Plex is authoritative and the local clock
-        # must not advance.
         if state != "playing":
             position = raw_position
             _clocks[key] = {
@@ -62,20 +69,12 @@ def _smooth_position(session) -> None:
             raw_change = raw_position - previous_raw
 
             if abs(raw_change) <= RAW_CHANGE_EPSILON_SECONDS:
-                # Plex is still returning the same stale viewOffset. Do NOT
-                # mistake the growing gap to the local clock for a backwards
-                # seek; simply keep the local clock moving forward.
                 position = predicted
             elif raw_change < -SEEK_THRESHOLD_SECONDS:
-                # Plex's raw position genuinely moved backwards: real seek.
                 position = raw_position
             elif raw_change > elapsed + SEEK_THRESHOLD_SECONDS:
-                # Plex jumped forward much farther than normal playback could
-                # have advanced since the previous request: real forward seek.
                 position = raw_position
             else:
-                # Normal coarse Plex update catching up with playback. Never
-                # move backwards; use whichever position is farther ahead.
                 position = max(predicted, raw_position)
 
         _clocks[key] = {
@@ -85,17 +84,53 @@ def _smooth_position(session) -> None:
             "state": state,
         }
 
-    # main.status() reads viewOffset after select_session(), so replacing it here
-    # transparently gives the rest of the application the smoothed position.
     session.viewOffset = int(position * 1000)
 
 
 def select_session_with_smooth_clock(sessions):
-    session = _original_select_session(sessions)
+    items = list(sessions)
+    requested_player_id = _selected_player_id.get()
+
+    # For normal app status calls selection is explicit. An empty string means
+    # the browser has not selected a player, so do not fall back to any session.
+    if requested_player_id is not None:
+        if not requested_player_id:
+            return None
+        session = next((item for item in items if _player_id(item) == requested_player_id), None)
+    else:
+        # Keep diagnostics useful when called directly.
+        session = _original_select_session(items)
+
     if session is not None:
         _smooth_position(session)
     return session
 
 
 main.select_session = select_session_with_smooth_clock
+
+
+@main.app.get("/api/sessions")
+def sessions():
+    items = list(main.plex_server().sessions())
+    result = []
+    for session in items:
+        data = main.serialize_session(session)
+        data["player_id"] = _player_id(session)
+        result.append(data)
+    return {"ok": True, "sessions": result}
+
+
+@main.app.middleware("http")
+async def selected_session_context(request: Request, call_next):
+    if request.url.path != "/api/status":
+        return await call_next(request)
+
+    player_id = request.query_params.get("player_id", "")
+    token = _selected_player_id.set(player_id)
+    try:
+        return await call_next(request)
+    finally:
+        _selected_player_id.reset(token)
+
+
 app = main.app
