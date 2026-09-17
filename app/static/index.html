@@ -26,7 +26,7 @@
       z-index: 20;
       display: flex;
       align-items: center;
-      gap: 4px;
+      gap: 3px;
       padding: 4px;
       border: 1px solid rgba(255,255,255,.15);
       border-radius: 999px;
@@ -35,6 +35,7 @@
       -webkit-backdrop-filter: blur(10px);
       transition: opacity .25s ease, transform .25s ease;
       white-space: nowrap;
+      max-width: calc(100vw - 16px);
     }
     #controls.hidden-controls {
       opacity: .08;
@@ -45,16 +46,31 @@
       background: transparent;
       color: #fff;
       border-radius: 999px;
-      min-width: 34px;
+      min-width: 32px;
       height: 34px;
-      padding: 0 9px;
+      padding: 0 8px;
       font: inherit;
       font-size: 13px;
       cursor: pointer;
     }
     #controls button:active { background: rgba(255,255,255,.14); }
-    #delayValue { min-width: 44px; text-align: center; font-size: 12px; opacity: .78; }
-    #divider { width: 1px; height: 18px; background: rgba(255,255,255,.14); }
+    #sessionSelect {
+      width: min(31vw, 128px);
+      max-width: 128px;
+      height: 34px;
+      border: 0;
+      border-radius: 999px;
+      padding: 0 7px;
+      background: transparent;
+      color: #fff;
+      font: inherit;
+      font-size: 12px;
+      outline: none;
+      text-overflow: ellipsis;
+    }
+    #sessionSelect option { background: #181818; color: #fff; }
+    #delayValue { min-width: 40px; text-align: center; font-size: 12px; opacity: .78; }
+    .divider { width: 1px; height: 18px; background: rgba(255,255,255,.14); flex: 0 0 auto; }
 
     #cinemaNotice {
       position: fixed;
@@ -85,8 +101,12 @@
 </main>
 
 <div id="controls">
+  <select id="sessionSelect" title="Sesión de Plex">
+    <option value="">📺 Sesión…</option>
+  </select>
+  <div class="divider"></div>
   <button id="cinemaButton" type="button" title="Modo cine">▶ Cine</button>
-  <div id="divider"></div>
+  <div class="divider"></div>
   <button id="delayMinus" type="button" title="Reducir retardo">−</button>
   <span id="delayValue">1.0 s</span>
   <button id="delayPlus" type="button" title="Aumentar retardo">+</button>
@@ -99,7 +119,9 @@
   let cinemaEnabled = false;
   let controlsTimer = null;
   let subtitleDelayMs = Number(localStorage.getItem("subtitleDelayMs") || 1000);
+  let selectedPlayerId = localStorage.getItem("selectedPlayerId") || "";
   let delayedQueue = [];
+  let sessionRefreshTimer = null;
 
   subtitleDelayMs = Math.max(0, Math.min(5000, subtitleDelayMs));
 
@@ -124,6 +146,13 @@
     showControls();
   }
 
+  function setSelectedPlayer(playerId) {
+    selectedPlayerId = playerId || "";
+    delayedQueue = [];
+    if (selectedPlayerId) localStorage.setItem("selectedPlayerId", selectedPlayerId);
+    else localStorage.removeItem("selectedPlayerId");
+  }
+
   function notice(message) {
     const node = el("cinemaNotice");
     node.textContent = message;
@@ -140,9 +169,7 @@
 
   async function requestWakeLock() {
     if (!("wakeLock" in navigator)) {
-      notice(window.isSecureContext
-        ? "Mantener pantalla activa no está disponible"
-        : "Wake Lock requiere HTTPS");
+      notice(window.isSecureContext ? "Mantener pantalla activa no está disponible" : "Wake Lock requiere HTTPS");
       return false;
     }
     try {
@@ -210,6 +237,14 @@
     setDelay(subtitleDelayMs + 250);
   });
 
+  el("sessionSelect").addEventListener("change", event => {
+    event.stopPropagation();
+    setSelectedPlayer(event.target.value);
+    if (selectedPlayerId) notice("Sesión seleccionada");
+    else notice("Sin sesión seleccionada");
+    showControls();
+  });
+
   document.addEventListener("pointerdown", showControls, { passive: true });
 
   document.addEventListener("visibilitychange", async () => {
@@ -225,12 +260,24 @@
     }
   });
 
-  function renderIdle() {
-    el("title").textContent = "Sin reproducción activa";
+  function renderNoSelection(message = "Selecciona una sesión de Plex") {
+    el("title").textContent = "Sin sesión seleccionada";
     el("meta").textContent = "";
     el("current").textContent = "—";
     el("next").textContent = "";
-    el("status").textContent = "Reproduce una película o episodio en Plex";
+    el("status").textContent = message;
+  }
+
+  function renderIdle() {
+    if (!selectedPlayerId) {
+      renderNoSelection();
+      return;
+    }
+    el("title").textContent = "Sesión no disponible";
+    el("meta").textContent = "";
+    el("current").textContent = "—";
+    el("next").textContent = "";
+    el("status").textContent = "La sesión seleccionada ya no está activa";
   }
 
   function renderActive(data) {
@@ -260,9 +307,7 @@
     const now = performance.now();
     delayedQueue.push({ due: now + subtitleDelayMs, data });
 
-    while (delayedQueue.length > 1 && delayedQueue[1].due <= now) {
-      delayedQueue.shift();
-    }
+    while (delayedQueue.length > 1 && delayedQueue[1].due <= now) delayedQueue.shift();
 
     if (subtitleDelayMs === 0) {
       data.active ? renderActive(data) : renderIdle();
@@ -276,9 +321,46 @@
     }
   }
 
+  async function refreshSessions() {
+    try {
+      const response = await fetch("/api/sessions", { cache: "no-store" });
+      const data = await response.json();
+      if (!data.ok) return;
+
+      const sessions = data.sessions || [];
+      const select = el("sessionSelect");
+      const remembered = selectedPlayerId;
+
+      select.innerHTML = '<option value="">📺 Sesión…</option>';
+      for (const session of sessions) {
+        const option = document.createElement("option");
+        option.value = session.player_id;
+        const client = session.client || session.device || session.product || "Plex";
+        option.textContent = `${client} · ${session.title || "Reproducción"}`;
+        select.appendChild(option);
+      }
+
+      if (remembered && sessions.some(item => item.player_id === remembered)) {
+        select.value = remembered;
+      } else if (remembered) {
+        setSelectedPlayer("");
+        select.value = "";
+        renderNoSelection("La sesión guardada ya no está activa");
+      } else {
+        select.value = "";
+      }
+    } catch (_) {
+      // Keep the current selection and let /api/status surface connectivity errors.
+    } finally {
+      window.clearTimeout(sessionRefreshTimer);
+      sessionRefreshTimer = window.setTimeout(refreshSessions, 2000);
+    }
+  }
+
   async function refresh() {
     try {
-      const response = await fetch("/api/status", { cache: "no-store" });
+      const url = `/api/status?player_id=${encodeURIComponent(selectedPlayerId)}`;
+      const response = await fetch(url, { cache: "no-store" });
       const data = await response.json();
       el("current").classList.remove("error");
       if (!data.ok) throw new Error(data.error || "Error desconocido");
@@ -298,6 +380,7 @@
 
   updateDelayLabel();
   showControls();
+  refreshSessions();
   refresh();
 </script>
 </body>
