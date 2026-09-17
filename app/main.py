@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import logging
 import os
 import re
 from bisect import bisect_right
@@ -12,6 +13,13 @@ from typing import Iterable
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from plexapi.server import PlexServer
+
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("plex-subtitles")
 
 
 @dataclass(frozen=True)
@@ -67,13 +75,25 @@ ASS_OVERRIDE_RE = re.compile(r"\{\\[^}]*\}")
 
 @lru_cache(maxsize=1)
 def settings() -> Settings:
-    return Settings.from_env()
+    cfg = Settings.from_env()
+    logger.info(
+        "Configuration loaded: plex_url=%s client_filter=%s plex_media_root=%s container_media_root=%s poll_ms=%s",
+        cfg.plex_url,
+        cfg.plex_client_filter or "<none>",
+        cfg.plex_media_root,
+        cfg.container_media_root,
+        cfg.poll_interval_ms,
+    )
+    return cfg
 
 
 @lru_cache(maxsize=1)
 def plex_server() -> PlexServer:
     cfg = settings()
-    return PlexServer(cfg.plex_url, cfg.plex_token, timeout=5)
+    logger.info("Connecting to Plex at %s", cfg.plex_url)
+    server = PlexServer(cfg.plex_url, cfg.plex_token, timeout=5)
+    logger.info("Connected to Plex server: %s", getattr(server, "friendlyName", "unknown"))
+    return server
 
 
 def normalize_path(value: str) -> str:
@@ -152,18 +172,21 @@ def media_file_from_session(session) -> str | None:
     return None
 
 
-def find_spanish_srt(media_file: Path) -> Path | None:
+def subtitle_candidates(media_file: Path) -> list[Path]:
     folder = media_file.parent
     if not folder.is_dir():
-        return None
+        return []
 
     media_stem = media_file.stem.casefold()
-    candidates = [
+    return [
         path
         for path in folder.glob("*.srt")
         if path.name.casefold().startswith(media_stem)
     ]
 
+
+def find_spanish_srt(media_file: Path) -> Path | None:
+    candidates = subtitle_candidates(media_file)
     if not candidates:
         return None
 
@@ -215,6 +238,7 @@ def parse_srt_cached(path_string: str, mtime_ns: int) -> tuple[Cue, ...]:
             continue
 
     cues.sort(key=lambda cue: cue.start)
+    logger.info("Loaded %s subtitle cues from %s", len(cues), path_string)
     return tuple(cues)
 
 
@@ -264,6 +288,59 @@ def display_title(session) -> str:
     return title or "Plex"
 
 
+def build_diagnostics() -> dict:
+    cfg = settings()
+    result = {
+        "ok": True,
+        "plex_url": cfg.plex_url,
+        "plex_connected": False,
+        "plex_server": None,
+        "session_found": False,
+        "session_count": 0,
+        "selected_client": None,
+        "state": None,
+        "position": None,
+        "plex_media_path": None,
+        "container_media_path": None,
+        "media_exists": False,
+        "subtitle_candidates": [],
+        "subtitle_path": None,
+        "subtitle_found": False,
+    }
+
+    plex = plex_server()
+    result["plex_connected"] = True
+    result["plex_server"] = getattr(plex, "friendlyName", None)
+
+    sessions = list(plex.sessions())
+    result["session_count"] = len(sessions)
+    session = select_session(sessions)
+    if session is None:
+        return result
+
+    result["session_found"] = True
+    client, product, device, state = session_player_fields(session)
+    result["selected_client"] = client or product or device or "Plex"
+    result["state"] = state
+    result["position"] = int(getattr(session, "viewOffset", 0) or 0) / 1000
+
+    plex_media_path = media_file_from_session(session)
+    result["plex_media_path"] = plex_media_path
+    if not plex_media_path:
+        return result
+
+    media_path = map_media_path(plex_media_path)
+    result["container_media_path"] = str(media_path)
+    result["media_exists"] = media_path.is_file()
+
+    candidates = subtitle_candidates(media_path)
+    result["subtitle_candidates"] = [str(path) for path in candidates]
+    subtitle_path = find_spanish_srt(media_path)
+    result["subtitle_path"] = str(subtitle_path) if subtitle_path else None
+    result["subtitle_found"] = bool(subtitle_path and subtitle_path.is_file())
+    return result
+
+
 @app.get("/")
 def index():
     return FileResponse(STATIC_DIR / "index.html")
@@ -272,6 +349,18 @@ def index():
 @app.get("/api/health")
 def health():
     return {"ok": True}
+
+
+@app.get("/api/debug")
+def debug():
+    try:
+        return build_diagnostics()
+    except Exception as exc:
+        logger.exception("Diagnostics failed")
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+        )
 
 
 @app.get("/api/status")
@@ -294,6 +383,16 @@ def status():
         media_path = map_media_path(plex_media_path) if plex_media_path else None
         subtitle_path = find_spanish_srt(media_path) if media_path else None
 
+        logger.debug(
+            "Session client=%s state=%s position=%.3fs plex_media=%s mapped_media=%s subtitle=%s",
+            client or product or device or "Plex",
+            state,
+            position,
+            plex_media_path,
+            media_path,
+            subtitle_path,
+        )
+
         current = next_cue = None
         if subtitle_path and subtitle_path.is_file():
             current, next_cue = cue_pair(load_cues(subtitle_path), position)
@@ -313,6 +412,7 @@ def status():
         }
 
     except Exception as exc:
+        logger.exception("Status update failed")
         return JSONResponse(
             status_code=500,
             content={"ok": False, "error": f"{type(exc).__name__}: {exc}"},
