@@ -10,7 +10,6 @@ services:
     environment:
       PLEX_URL: "${PLEX_URL:-http://host.docker.internal:32400}"
       PLEX_TOKEN: "${PLEX_TOKEN:?PLEX_TOKEN is required}"
-      PLEX_CLIENT_FILTER: "${PLEX_CLIENT_FILTER:-Samsung}"
       PLEX_MEDIA_ROOT: "${PLEX_MEDIA_ROOT:-/data/media}"
       CONTAINER_MEDIA_ROOT: "/data/media"
       POLL_INTERVAL_MS: "${POLL_INTERVAL_MS:-750}"
