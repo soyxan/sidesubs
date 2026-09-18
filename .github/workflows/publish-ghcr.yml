@@ -11,7 +11,7 @@ permissions:
   packages: write
 
 env:
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/plex-subtitles
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/subcompanion
 
 jobs:
   publish:
