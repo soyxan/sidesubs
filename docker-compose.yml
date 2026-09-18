@@ -1,7 +1,7 @@
 services:
-  plex-subtitles:
-    image: ghcr.io/soyxan/plex-subtitles:latest
-    container_name: plex-subtitles
+  subcompanion:
+    image: ghcr.io/soyxan/subcompanion:latest
+    container_name: subcompanion
     restart: unless-stopped
 
     ports:
