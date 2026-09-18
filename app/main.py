@@ -183,12 +183,24 @@ def normalize_language(value: str | None) -> str:
     return LANGUAGE_ALIASES.get(primary, primary)
 
 
+def infer_language(value: str | None) -> str:
+    text = (value or "").strip().casefold()
+    direct = normalize_language(text)
+    if direct in set(LANGUAGE_ALIASES.values()):
+        return direct
+    for token in re.split(r"[^a-zA-ZÀ-ÿ]+", text):
+        normalized = normalize_language(token)
+        if token in LANGUAGE_ALIASES or normalized in set(LANGUAGE_ALIASES.values()):
+            return normalized
+    return ""
+
+
 def language_from_external_name(media_file: Path, subtitle_file: Path) -> str:
     suffix = subtitle_file.stem[len(media_file.stem):].lstrip("._ -")
     if not suffix:
         return ""
     first = re.split(r"[._ -]+", suffix, maxsplit=1)[0]
-    return normalize_language(first)
+    return infer_language(first)
 
 
 def subtitle_candidates(media_file: Path) -> list[Path]:
@@ -309,11 +321,13 @@ def discover_subtitle_tracks(media_file: Path) -> list[dict]:
         tags = stream.get("tags") or {}
         codec = str(stream.get("codec_name") or "").casefold()
         index = int(stream.get("index"))
+        title = tags.get("title") or f"Stream {index}"
+        language = infer_language(tags.get("language")) or infer_language(title)
         tracks.append({
             "id": f"embedded:{index}",
             "source": "embedded",
-            "language": normalize_language(tags.get("language")) or None,
-            "title": tags.get("title") or f"Stream {index}",
+            "language": language or None,
+            "title": title,
             "codec": codec or None,
             "compatible": codec in TEXT_SUBTITLE_CODECS,
             "stream_index": index,
@@ -333,8 +347,7 @@ def choose_subtitle_track(tracks: list[dict], preferred_language: str, requested
     language = normalize_language(preferred_language)
     if language:
         matches = [track for track in compatible if normalize_language(track.get("language")) == language]
-        if matches:
-            return matches[0]
+        return matches[0] if matches else None
 
     return compatible[0] if compatible else None
 
@@ -492,6 +505,7 @@ def status(preferred_language: str = "", subtitle_id: str = ""):
         media_path = map_media_path(plex_media_path) if plex_media_path else None
 
         current = next_cue = None
+        cues: tuple[Cue, ...] = ()
         tracks: list[dict] = []
         selected_track = None
         subtitle_error = None
@@ -528,7 +542,7 @@ def status(preferred_language: str = "", subtitle_id: str = ""):
             "media_found": bool(media_path and media_path.is_file()),
             "subtitle_tracks": tracks,
             "selected_subtitle_id": selected_track["id"] if selected_track else None,
-            "subtitle_found": selected_track is not None and subtitle_error is None,
+            "subtitle_found": bool(cues) and subtitle_error is None,
             "subtitle_error": subtitle_error,
             "current": serialize_cue(current),
             "next": serialize_cue(next_cue),
