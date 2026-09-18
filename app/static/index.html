@@ -160,6 +160,14 @@
   let delayedQueue = [];
   let sessionRefreshTimer = null;
 
+  function isNativeAndroid() {
+    try {
+      return Boolean(window.SideSubsAndroid && window.SideSubsAndroid.isNativeApp());
+    } catch (_) {
+      return false;
+    }
+  }
+
   subtitleDelayMs = Math.max(0, Math.min(5000, subtitleDelayMs));
 
   function formatTime(seconds) {
@@ -410,6 +418,15 @@
 
   async function exitCinemaMode() {
     cinemaEnabled = false;
+
+    if (isNativeAndroid()) {
+      window.SideSubsAndroid.exitCinemaMode();
+      el("cinemaButton").textContent = "▶ Cinema";
+      showControls();
+      notice("Cinema mode disabled");
+      return;
+    }
+
     if (wakeLock) {
       try { await wakeLock.release(); } catch (_) {}
       wakeLock = null;
@@ -423,6 +440,15 @@
 
   async function enterCinemaMode() {
     cinemaEnabled = true;
+
+    if (isNativeAndroid()) {
+      window.SideSubsAndroid.enterCinemaMode();
+      el("cinemaButton").textContent = "✕ Cinema";
+      showControls();
+      notice("Cinema mode active");
+      return;
+    }
+
     const fullscreenOk = await enterFullscreen();
     const wakeOk = await requestWakeLock();
     el("cinemaButton").textContent = "✕ Cinema";
@@ -476,13 +502,13 @@
 
   document.addEventListener("pointerdown", showControls, { passive: true });
   document.addEventListener("visibilitychange", async () => {
-    if (cinemaEnabled && document.visibilityState === "visible" && !wakeLock) {
+    if (!isNativeAndroid() && cinemaEnabled && document.visibilityState === "visible" && !wakeLock) {
       await requestWakeLock();
       showControls();
     }
   });
   document.addEventListener("fullscreenchange", () => {
-    if (cinemaEnabled && !document.fullscreenElement) {
+    if (!isNativeAndroid() && cinemaEnabled && !document.fullscreenElement) {
       notice("Fullscreen disabled · Wake Lock remains active when available");
     }
   });
