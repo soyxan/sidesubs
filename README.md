@@ -2,7 +2,7 @@
 
 **SideSubs** is a second-screen subtitle companion for Plex.
 
-It is designed for situations where you want subtitles on a phone or tablet while watching the actual video on another screen. A common use case is keeping English subtitles on the TV and displaying Spanish subtitles on your phone, but the TV does not need to show subtitles at all.
+It is designed for situations where you want subtitles on a phone or tablet while watching the actual video on another screen. The subtitle language and the exact subtitle track are selectable independently from whatever is shown on the TV.
 
 ## Features
 
@@ -11,7 +11,9 @@ It is designed for situations where you want subtitles on a phone or tablet whil
 - Selected player is remembered in the browser with `localStorage`.
 - Optional subtitle display delay, adjustable from the interface.
 - Current and next subtitle shown together for quick reference.
-- External SRT subtitle support.
+- Preferred subtitle language stored per browser/device.
+- Per-title subtitle track selection from the main interface.
+- Unified discovery of external SRT and embedded subtitle tracks.
 - Embedded text subtitle support through FFmpeg/FFprobe.
 - Smooth local playback clock to compensate for coarse Plex `viewOffset` updates.
 - Cinema mode with fullscreen and Screen Wake Lock support when the browser allows it.
@@ -97,38 +99,41 @@ http://YOUR-SERVER-IP:8085
 3. The selected player ID is stored locally in that browser.
 4. Plex provides the playback position and media metadata.
 5. SideSubs maps the Plex media path to the read-only media volume.
-6. It loads a compatible Spanish subtitle track, either from an external SRT or from an embedded text subtitle stream.
-7. The backend smooths coarse Plex position updates.
-8. The phone polls the backend and displays the synchronized current and next subtitles.
-9. An optional client-side delay lets the subtitle remain visible slightly after it appeared on the TV.
+6. It discovers all matching external SRT files and embedded subtitle streams.
+7. It automatically selects a compatible track in the preferred language, unless a specific track has been selected for that title.
+8. The backend smooths coarse Plex position updates.
+9. The phone polls the backend and displays the synchronized current and next subtitles.
+10. An optional client-side delay lets the subtitle remain visible slightly after it appeared on the TV.
 
 If the selected Plex session disappears, SideSubs does **not** silently switch to another player. The interface asks you to select a session again.
 
-## Subtitle support
+## Subtitle selection
+
+SideSubs treats external SRT files and embedded MKV subtitle streams as tracks in the same selector.
+
+The **Settings** button lets each browser/device store a preferred subtitle language, such as `en`, `es`, `fr` or `de`. When a title starts, SideSubs automatically picks the first compatible track matching that language.
+
+The subtitle selector in the main control bar lists the tracks available for the current media item. A manual selection is remembered for that Plex title and overrides the preferred language for that title only. Selecting **Auto** returns to preferred-language selection.
 
 ### External SRT
 
-The video and subtitle should share the same base filename. Recognized examples include:
+External SRT files whose names begin with the media filename are discovered automatically. Language is inferred from the suffix when possible.
+
+Examples:
 
 ```text
 Movie.mkv
+Movie.en.srt
 Movie.es.srt
-Movie.es-ES.srt
-Movie.spa.srt
-Movie.spanish.srt
-Movie.español.srt
-Movie.castellano.srt
+Movie.fr.forced.srt
+Movie.commentary.srt
 ```
-
-If only one matching external SRT exists, it may be used as a fallback.
 
 ### Embedded subtitles
 
-SideSubs can inspect subtitle streams inside media containers using FFprobe and extract compatible text-based Spanish streams with FFmpeg.
+SideSubs inspects embedded subtitle streams with FFprobe. Language comes from stream metadata when available and can also be inferred from common language names in the stream title.
 
-Supported text subtitle codecs include SRT/SubRip, ASS/SSA, WebVTT and mov_text.
-
-Image-based subtitle formats such as PGS cannot currently be converted to text automatically.
+Supported text subtitle codecs include SRT/SubRip, ASS/SSA, WebVTT and mov_text. Image-based tracks such as PGS are shown in the selector as unsupported but cannot currently be rendered as text.
 
 ## Android client
 
