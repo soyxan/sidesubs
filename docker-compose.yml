@@ -1,7 +1,7 @@
 services:
-  subcompanion:
-    image: ghcr.io/soyxan/subcompanion:latest
-    container_name: subcompanion
+  sidesubs:
+    image: ghcr.io/soyxan/sidesubs:latest
+    container_name: sidesubs
     restart: unless-stopped
 
     ports:
