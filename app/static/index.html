@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#000000">
-  <title>Plex Subtitles</title>
+  <title>SubCompanion</title>
   <style>
     :root { color-scheme: dark; }
     * { box-sizing: border-box; }
@@ -93,7 +93,7 @@
 <body>
 <div id="cinemaNotice"></div>
 <main>
-  <div id="title">Conectando con Plex…</div>
+  <div id="title">Connecting to Plex…</div>
   <div id="meta"></div>
   <div id="current">—</div>
   <div id="next"></div>
@@ -101,15 +101,15 @@
 </main>
 
 <div id="controls">
-  <select id="sessionSelect" title="Sesión de Plex">
-    <option value="">📺 Sesión…</option>
+  <select id="sessionSelect" title="Plex session">
+    <option value="">📺 Session…</option>
   </select>
   <div class="divider"></div>
-  <button id="cinemaButton" type="button" title="Modo cine">▶ Cine</button>
+  <button id="cinemaButton" type="button" title="Cinema mode">▶ Cinema</button>
   <div class="divider"></div>
-  <button id="delayMinus" type="button" title="Reducir retardo">−</button>
+  <button id="delayMinus" type="button" title="Decrease delay">−</button>
   <span id="delayValue">1.0 s</span>
-  <button id="delayPlus" type="button" title="Aumentar retardo">+</button>
+  <button id="delayPlus" type="button" title="Increase delay">+</button>
 </div>
 
 <script>
@@ -142,7 +142,7 @@
     localStorage.setItem("subtitleDelayMs", String(subtitleDelayMs));
     delayedQueue = [];
     updateDelayLabel();
-    notice(`Retardo: ${(subtitleDelayMs / 1000).toFixed(1)} s`);
+    notice(`Delay: ${(subtitleDelayMs / 1000).toFixed(1)} s`);
     showControls();
   }
 
@@ -169,7 +169,7 @@
 
   async function requestWakeLock() {
     if (!("wakeLock" in navigator)) {
-      notice(window.isSecureContext ? "Mantener pantalla activa no está disponible" : "Wake Lock requiere HTTPS");
+      notice(window.isSecureContext ? "Keep screen on is not available" : "Wake Lock requires HTTPS");
       return false;
     }
     try {
@@ -185,7 +185,7 @@
   async function enterFullscreen() {
     if (document.fullscreenElement) return true;
     if (!document.documentElement.requestFullscreen) {
-      notice("Pantalla completa no disponible");
+      notice("Fullscreen is not available");
       return false;
     }
     try {
@@ -206,7 +206,7 @@
     if (document.fullscreenElement && document.exitFullscreen) {
       try { await document.exitFullscreen(); } catch (_) {}
     }
-    el("cinemaButton").textContent = "▶ Cine";
+    el("cinemaButton").textContent = "▶ Cinema";
     showControls();
   }
 
@@ -214,11 +214,11 @@
     cinemaEnabled = true;
     const fullscreenOk = await enterFullscreen();
     const wakeOk = await requestWakeLock();
-    el("cinemaButton").textContent = "✕ Cine";
+    el("cinemaButton").textContent = "✕ Cinema";
     showControls();
-    if (fullscreenOk && wakeOk) notice("Modo cine activo");
-    else if (fullscreenOk) notice("Fullscreen activo · Wake Lock no disponible");
-    else if (wakeOk) notice("Pantalla despierta · sin fullscreen");
+    if (fullscreenOk && wakeOk) notice("Cinema mode active");
+    else if (fullscreenOk) notice("Fullscreen active · Wake Lock unavailable");
+    else if (wakeOk) notice("Screen awake · no fullscreen");
   }
 
   el("cinemaButton").addEventListener("click", async event => {
@@ -240,8 +240,8 @@
   el("sessionSelect").addEventListener("change", event => {
     event.stopPropagation();
     setSelectedPlayer(event.target.value);
-    if (selectedPlayerId) notice("Sesión seleccionada");
-    else notice("Sin sesión seleccionada");
+    if (selectedPlayerId) notice("Session selected");
+    else notice("No session selected");
     showControls();
   });
 
@@ -256,12 +256,12 @@
 
   document.addEventListener("fullscreenchange", () => {
     if (cinemaEnabled && !document.fullscreenElement) {
-      notice("Fullscreen desactivado · Wake Lock sigue activo si es posible");
+      notice("Fullscreen disabled · Wake Lock remains active when available");
     }
   });
 
-  function renderNoSelection(message = "Selecciona una sesión de Plex") {
-    el("title").textContent = "Sin sesión seleccionada";
+  function renderNoSelection(message = "Select a Plex session") {
+    el("title").textContent = "No session selected";
     el("meta").textContent = "";
     el("current").textContent = "—";
     el("next").textContent = "";
@@ -273,11 +273,11 @@
       renderNoSelection();
       return;
     }
-    el("title").textContent = "Sesión no disponible";
+    el("title").textContent = "Session unavailable";
     el("meta").textContent = "";
     el("current").textContent = "—";
     el("next").textContent = "";
-    el("status").textContent = "La sesión seleccionada ya no está activa";
+    el("status").textContent = "The selected session is no longer active";
   }
 
   function renderActive(data) {
@@ -285,22 +285,22 @@
     el("meta").textContent = `${data.client || "Plex"} · ${formatTime(data.position)} · ${data.state || ""}`;
 
     if (!data.media_found) {
-      el("current").textContent = "No puedo acceder al archivo de vídeo";
+      el("current").textContent = "Cannot access the media file";
       el("next").textContent = "";
-      el("status").textContent = "Revisa la ruta de medios";
+      el("status").textContent = "Check the media path configuration";
       return;
     }
 
     if (!data.subtitle_found) {
-      el("current").textContent = "No encuentro subtítulos españoles";
+      el("current").textContent = "No Spanish subtitles found";
       el("next").textContent = "";
-      el("status").textContent = data.subtitle_error || "No se ha encontrado una pista compatible";
+      el("status").textContent = data.subtitle_error || "No compatible subtitle track found";
       return;
     }
 
     el("current").textContent = data.current?.text || "…";
     el("next").textContent = data.next?.text || "";
-    el("status").textContent = "✓ Sincronizado";
+    el("status").textContent = "✓ Synchronized";
   }
 
   function enqueueForDelayedRender(data) {
@@ -331,12 +331,12 @@
       const select = el("sessionSelect");
       const remembered = selectedPlayerId;
 
-      select.innerHTML = '<option value="">📺 Sesión…</option>';
+      select.innerHTML = '<option value="">📺 Session…</option>';
       for (const session of sessions) {
         const option = document.createElement("option");
         option.value = session.player_id;
         const client = session.client || session.device || session.product || "Plex";
-        option.textContent = `${client} · ${session.title || "Reproducción"}`;
+        option.textContent = `${client} · ${session.title || "Playback"}`;
         select.appendChild(option);
       }
 
@@ -345,7 +345,7 @@
       } else if (remembered) {
         setSelectedPlayer("");
         select.value = "";
-        renderNoSelection("La sesión guardada ya no está activa");
+        renderNoSelection("The saved session is no longer active");
       } else {
         select.value = "";
       }
@@ -363,7 +363,7 @@
       const response = await fetch(url, { cache: "no-store" });
       const data = await response.json();
       el("current").classList.remove("error");
-      if (!data.ok) throw new Error(data.error || "Error desconocido");
+      if (!data.ok) throw new Error(data.error || "Unknown error");
       pollMs = data.poll_interval_ms || pollMs;
       enqueueForDelayedRender(data);
     } catch (error) {
