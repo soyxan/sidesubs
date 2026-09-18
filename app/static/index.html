@@ -31,13 +31,12 @@
       padding: 0 8px; font: inherit; font-size: 13px; cursor: pointer;
     }
     #controls button:active { background: rgba(255,255,255,.14); }
-    #sessionSelect, #subtitleSelect {
-      height: 34px; border: 0; border-radius: 999px; padding: 0 7px; background: transparent; color: #fff;
-      font: inherit; font-size: 12px; outline: none; text-overflow: ellipsis;
+    #sessionButton, #subtitleButton {
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left;
     }
-    #sessionSelect { width: min(26vw, 125px); max-width: 125px; }
-    #subtitleSelect { width: min(28vw, 145px); max-width: 145px; }
-    #sessionSelect option, #subtitleSelect option { background: #181818; color: #fff; }
+    #sessionButton { width: min(26vw, 125px); max-width: 125px; }
+    #subtitleButton { width: min(28vw, 145px); max-width: 145px; }
+    #sessionButton:disabled, #subtitleButton:disabled { opacity: .42; cursor: default; }
     #delayValue { min-width: 40px; text-align: center; font-size: 12px; opacity: .78; }
     .divider { width: 1px; height: 18px; background: rgba(255,255,255,.14); flex: 0 0 auto; }
 
@@ -48,11 +47,11 @@
     }
     #cinemaNotice.show { opacity: .82; }
 
-    #settingsBackdrop {
+    #settingsBackdrop, #choiceBackdrop {
       position: fixed; inset: 0; z-index: 40; display: none; align-items: center; justify-content: center;
       padding: 20px; background: rgba(0,0,0,.72); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
     }
-    #settingsBackdrop.show { display: flex; }
+    #settingsBackdrop.show, #choiceBackdrop.show { display: flex; }
     #settingsPanel {
       width: min(420px, 100%); border: 1px solid rgba(255,255,255,.16); border-radius: 18px;
       padding: 20px; background: #151515; box-shadow: 0 18px 60px rgba(0,0,0,.5);
@@ -70,6 +69,25 @@
     }
     #settingsCancel { background: #2a2a2a; color: #fff; }
     #settingsSave { background: #fff; color: #000; font-weight: 700; }
+
+    #choicePanel {
+      width: min(520px, 100%); max-height: min(72vh, 620px); display: flex; flex-direction: column;
+      border: 1px solid rgba(255,255,255,.16); border-radius: 18px; padding: 16px;
+      background: #151515; box-shadow: 0 18px 60px rgba(0,0,0,.5);
+    }
+    #choiceHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    #choiceTitle { margin: 0; font-size: 20px; }
+    #choiceClose { border: 0; border-radius: 999px; width: 34px; height: 34px; background: #292929; color: #fff; font-size: 18px; }
+    #choiceList { display: flex; flex-direction: column; gap: 7px; overflow-y: auto; overscroll-behavior: contain; }
+    .choiceItem {
+      width: 100%; border: 1px solid rgba(255,255,255,.10); border-radius: 12px; padding: 11px 13px;
+      background: #0d0d0d; color: #fff; text-align: left; font: inherit;
+    }
+    .choiceItem:active { background: #242424; }
+    .choiceItem.active { border-color: rgba(255,255,255,.55); background: #222; }
+    .choiceItem:disabled { opacity: .38; }
+    .choicePrimary { display: block; font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
+    .choiceSecondary { display: block; margin-top: 3px; font-size: 12px; line-height: 1.3; opacity: .56; overflow-wrap: anywhere; }
   </style>
 </head>
 <body>
@@ -94,6 +112,16 @@
   </div>
 </div>
 
+<div id="choiceBackdrop">
+  <div id="choicePanel" role="dialog" aria-modal="true" aria-labelledby="choiceTitle">
+    <div id="choiceHeader">
+      <h2 id="choiceTitle">Choose</h2>
+      <button id="choiceClose" type="button" aria-label="Close">×</button>
+    </div>
+    <div id="choiceList"></div>
+  </div>
+</div>
+
 <main>
   <div id="title">Connecting to Plex…</div>
   <div id="meta"></div>
@@ -103,9 +131,9 @@
 </main>
 
 <div id="controls">
-  <select id="sessionSelect" title="Plex session"><option value="">📺 Session…</option></select>
+  <button id="sessionButton" type="button" title="Plex session">📺 Session…</button>
   <div class="divider"></div>
-  <select id="subtitleSelect" title="Subtitle track" disabled><option value="">💬 Subtitles…</option></select>
+  <button id="subtitleButton" type="button" title="Subtitle track" disabled>💬 Subtitles…</button>
   <div class="divider"></div>
   <button id="settingsButton" type="button" title="Settings">⚙</button>
   <button id="cinemaButton" type="button" title="Cinema mode">▶ Cinema</button>
@@ -126,6 +154,9 @@
   let preferredLanguage = localStorage.getItem("preferredSubtitleLanguage") || (navigator.language || "en").split("-")[0].toLowerCase();
   let subtitleSelections = JSON.parse(localStorage.getItem("subtitleSelections") || "{}");
   let currentRatingKey = "";
+  let currentSessions = [];
+  let currentSubtitleTracks = [];
+  let currentAutoSubtitleId = "";
   let delayedQueue = [];
   let sessionRefreshTimer = null;
 
@@ -179,20 +210,12 @@
     return `${language} · ${source} · ${title}${track.compatible ? "" : " · unsupported"}`;
   }
 
-  function updateSubtitleSelector(data) {
-    const select = el("subtitleSelect");
+  function updateSubtitleButton(data) {
     const tracks = data.subtitle_tracks || [];
     const previousRatingKey = currentRatingKey;
     currentRatingKey = data.rating_key || "";
-
-    select.innerHTML = '<option value="">💬 Auto</option>';
-    for (const track of tracks) {
-      const option = document.createElement("option");
-      option.value = track.id;
-      option.textContent = subtitleLabel(track);
-      option.disabled = !track.compatible;
-      select.appendChild(option);
-    }
+    currentSubtitleTracks = tracks;
+    currentAutoSubtitleId = data.selected_subtitle_id || "";
 
     let manual = selectedSubtitleId();
     if (manual && !tracks.some(track => track.id === manual && track.compatible)) {
@@ -200,8 +223,11 @@
       manual = "";
     }
 
-    select.disabled = tracks.length === 0;
-    select.value = manual || data.selected_subtitle_id || "";
+    const activeId = manual || currentAutoSubtitleId;
+    const activeTrack = tracks.find(track => track.id === activeId);
+    const button = el("subtitleButton");
+    button.disabled = tracks.length === 0;
+    button.textContent = activeTrack ? `💬 ${subtitleLabel(activeTrack)}` : "💬 Auto";
 
     if (previousRatingKey !== currentRatingKey) delayedQueue = [];
   }
@@ -229,6 +255,127 @@
   function closeSettings() {
     el("settingsBackdrop").classList.remove("show");
     showControls();
+  }
+
+  function closeChoiceModal() {
+    el("choiceBackdrop").classList.remove("show");
+    el("choiceList").replaceChildren();
+    showControls();
+  }
+
+  function choiceItem(primary, secondary, active, disabled, onChoose) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `choiceItem${active ? " active" : ""}`;
+    button.disabled = Boolean(disabled);
+
+    const first = document.createElement("span");
+    first.className = "choicePrimary";
+    first.textContent = primary;
+    button.appendChild(first);
+
+    if (secondary) {
+      const second = document.createElement("span");
+      second.className = "choiceSecondary";
+      second.textContent = secondary;
+      button.appendChild(second);
+    }
+
+    if (!disabled) {
+      button.addEventListener("click", () => {
+        onChoose();
+        closeChoiceModal();
+      });
+    }
+    return button;
+  }
+
+  function openSessionModal() {
+    const list = el("choiceList");
+    list.replaceChildren();
+    el("choiceTitle").textContent = "Plex session";
+
+    list.appendChild(choiceItem(
+      "No session",
+      "Stop following the currently selected player",
+      !selectedPlayerId,
+      false,
+      () => {
+        setSelectedPlayer("");
+        updateSessionButton();
+        renderNoSelection();
+        notice("No session selected");
+      }
+    ));
+
+    for (const session of currentSessions) {
+      const client = session.client || session.device || session.product || "Plex";
+      list.appendChild(choiceItem(
+        client,
+        session.title || "Playback",
+        session.player_id === selectedPlayerId,
+        false,
+        () => {
+          setSelectedPlayer(session.player_id);
+          updateSessionButton();
+          notice("Session selected");
+        }
+      ));
+    }
+
+    el("choiceBackdrop").classList.add("show");
+    window.clearTimeout(controlsTimer);
+  }
+
+  function openSubtitleModal() {
+    if (!currentSubtitleTracks.length) return;
+    const list = el("choiceList");
+    list.replaceChildren();
+    el("choiceTitle").textContent = "Subtitle track";
+
+    const manual = selectedSubtitleId();
+    const autoTrack = currentSubtitleTracks.find(track => track.id === currentAutoSubtitleId);
+    list.appendChild(choiceItem(
+      "Auto",
+      autoTrack
+        ? `Preferred language · ${subtitleLabel(autoTrack)}`
+        : `Preferred language · ${preferredLanguage ? preferredLanguage.toUpperCase() : "any"}`,
+      !manual,
+      false,
+      () => {
+        saveSubtitleSelection(currentRatingKey, "");
+        updateSubtitleButton({ subtitle_tracks: currentSubtitleTracks, rating_key: currentRatingKey, selected_subtitle_id: currentAutoSubtitleId });
+        notice("Automatic subtitle selection");
+      }
+    ));
+
+    for (const track of currentSubtitleTracks) {
+      list.appendChild(choiceItem(
+        subtitleLabel(track),
+        track.compatible ? (track.source === "external" ? "External subtitle file" : "Embedded subtitle stream") : "This subtitle format cannot be rendered as text",
+        track.id === manual,
+        !track.compatible,
+        () => {
+          saveSubtitleSelection(currentRatingKey, track.id);
+          updateSubtitleButton({ subtitle_tracks: currentSubtitleTracks, rating_key: currentRatingKey, selected_subtitle_id: currentAutoSubtitleId });
+          notice("Subtitle track selected");
+        }
+      ));
+    }
+
+    el("choiceBackdrop").classList.add("show");
+    window.clearTimeout(controlsTimer);
+  }
+
+  function updateSessionButton() {
+    const session = currentSessions.find(item => item.player_id === selectedPlayerId);
+    const button = el("sessionButton");
+    if (!session) {
+      button.textContent = "📺 Session…";
+      return;
+    }
+    const client = session.client || session.device || session.product || "Plex";
+    button.textContent = `📺 ${client}`;
   }
 
   async function requestWakeLock() {
@@ -314,18 +461,17 @@
     event.stopPropagation();
     setDelay(subtitleDelayMs + 250);
   });
-  el("sessionSelect").addEventListener("change", event => {
+  el("sessionButton").addEventListener("click", event => {
     event.stopPropagation();
-    setSelectedPlayer(event.target.value);
-    notice(selectedPlayerId ? "Session selected" : "No session selected");
-    showControls();
+    openSessionModal();
   });
-  el("subtitleSelect").addEventListener("change", event => {
+  el("subtitleButton").addEventListener("click", event => {
     event.stopPropagation();
-    const trackId = event.target.value;
-    saveSubtitleSelection(currentRatingKey, trackId);
-    notice(trackId ? "Subtitle track selected" : "Automatic subtitle selection");
-    showControls();
+    openSubtitleModal();
+  });
+  el("choiceClose").addEventListener("click", closeChoiceModal);
+  el("choiceBackdrop").addEventListener("pointerdown", event => {
+    if (event.target === el("choiceBackdrop")) closeChoiceModal();
   });
 
   document.addEventListener("pointerdown", showControls, { passive: true });
@@ -347,7 +493,7 @@
     el("current").textContent = "—";
     el("next").textContent = "";
     el("status").textContent = message;
-    el("subtitleSelect").disabled = true;
+    el("subtitleButton").disabled = true;
   }
 
   function renderIdle() {
@@ -360,11 +506,11 @@
     el("current").textContent = "—";
     el("next").textContent = "";
     el("status").textContent = "The selected session is no longer active";
-    el("subtitleSelect").disabled = true;
+    el("subtitleButton").disabled = true;
   }
 
   function renderActive(data) {
-    updateSubtitleSelector(data);
+    updateSubtitleButton(data);
     el("title").textContent = data.title || "Plex";
     el("meta").textContent = `${data.client || "Plex"} · ${formatTime(data.position)} · ${data.state || ""}`;
 
@@ -410,26 +556,17 @@
       if (!data.ok) return;
 
       const sessions = data.sessions || [];
-      const select = el("sessionSelect");
       const remembered = selectedPlayerId;
-      select.innerHTML = '<option value="">📺 Session…</option>';
-
-      for (const session of sessions) {
-        const option = document.createElement("option");
-        option.value = session.player_id;
-        const client = session.client || session.device || session.product || "Plex";
-        option.textContent = `${client} · ${session.title || "Playback"}`;
-        select.appendChild(option);
-      }
+      currentSessions = sessions;
 
       if (remembered && sessions.some(item => item.player_id === remembered)) {
-        select.value = remembered;
+        updateSessionButton();
       } else if (remembered) {
         setSelectedPlayer("");
-        select.value = "";
+        updateSessionButton();
         renderNoSelection("The saved session is no longer active");
       } else {
-        select.value = "";
+        updateSessionButton();
       }
     } catch (_) {
       // /api/status will surface connectivity errors.
