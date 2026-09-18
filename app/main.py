@@ -21,7 +21,7 @@ logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
-logger = logging.getLogger("plex-subtitles")
+logger = logging.getLogger("subcompanion")
 
 
 @dataclass(frozen=True)
@@ -59,7 +59,7 @@ class Cue:
     text: str
 
 
-app = FastAPI(title="Plex Subtitles Companion", docs_url=None, redoc_url=None)
+app = FastAPI(title="SubCompanion", docs_url=None, redoc_url=None)
 STATIC_DIR = Path(__file__).parent / "static"
 
 SPANISH_SUFFIXES = (
