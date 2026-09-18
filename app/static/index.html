@@ -19,79 +19,81 @@
     .error { font-size: 22px !important; color: #ffb1b1; }
 
     #controls {
-      position: fixed;
-      left: 50%;
-      bottom: max(10px, env(safe-area-inset-bottom));
-      transform: translateX(-50%);
-      z-index: 20;
-      display: flex;
-      align-items: center;
-      gap: 3px;
-      padding: 4px;
-      border: 1px solid rgba(255,255,255,.15);
-      border-radius: 999px;
-      background: rgba(18,18,18,.74);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      transition: opacity .25s ease, transform .25s ease;
-      white-space: nowrap;
-      max-width: calc(100vw - 16px);
+      position: fixed; left: 50%; bottom: max(10px, env(safe-area-inset-bottom)); transform: translateX(-50%);
+      z-index: 20; display: flex; align-items: center; gap: 3px; padding: 4px;
+      border: 1px solid rgba(255,255,255,.15); border-radius: 999px; background: rgba(18,18,18,.74);
+      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      transition: opacity .25s ease, transform .25s ease; white-space: nowrap; max-width: calc(100vw - 16px);
     }
-    #controls.hidden-controls {
-      opacity: .08;
-      transform: translateX(-50%) translateY(5px) scale(.96);
-    }
+    #controls.hidden-controls { opacity: .08; transform: translateX(-50%) translateY(5px) scale(.96); }
     #controls button {
-      border: 0;
-      background: transparent;
-      color: #fff;
-      border-radius: 999px;
-      min-width: 32px;
-      height: 34px;
-      padding: 0 8px;
-      font: inherit;
-      font-size: 13px;
-      cursor: pointer;
+      border: 0; background: transparent; color: #fff; border-radius: 999px; min-width: 32px; height: 34px;
+      padding: 0 8px; font: inherit; font-size: 13px; cursor: pointer;
     }
     #controls button:active { background: rgba(255,255,255,.14); }
-    #sessionSelect {
-      width: min(31vw, 128px);
-      max-width: 128px;
-      height: 34px;
-      border: 0;
-      border-radius: 999px;
-      padding: 0 7px;
-      background: transparent;
-      color: #fff;
-      font: inherit;
-      font-size: 12px;
-      outline: none;
-      text-overflow: ellipsis;
+    #sessionSelect, #subtitleSelect {
+      height: 34px; border: 0; border-radius: 999px; padding: 0 7px; background: transparent; color: #fff;
+      font: inherit; font-size: 12px; outline: none; text-overflow: ellipsis;
     }
-    #sessionSelect option { background: #181818; color: #fff; }
+    #sessionSelect { width: min(26vw, 125px); max-width: 125px; }
+    #subtitleSelect { width: min(28vw, 145px); max-width: 145px; }
+    #sessionSelect option, #subtitleSelect option { background: #181818; color: #fff; }
     #delayValue { min-width: 40px; text-align: center; font-size: 12px; opacity: .78; }
     .divider { width: 1px; height: 18px; background: rgba(255,255,255,.14); flex: 0 0 auto; }
 
     #cinemaNotice {
-      position: fixed;
-      left: 50%;
-      bottom: calc(max(10px, env(safe-area-inset-bottom)) + 50px);
-      transform: translateX(-50%);
-      max-width: min(92vw, 620px);
-      padding: 8px 12px;
-      border-radius: 12px;
-      background: rgba(20,20,20,.82);
-      font-size: 12px;
-      text-align: center;
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity .25s ease;
+      position: fixed; left: 50%; bottom: calc(max(10px, env(safe-area-inset-bottom)) + 50px); transform: translateX(-50%);
+      max-width: min(92vw, 620px); padding: 8px 12px; border-radius: 12px; background: rgba(20,20,20,.82);
+      font-size: 12px; text-align: center; opacity: 0; pointer-events: none; transition: opacity .25s ease;
     }
     #cinemaNotice.show { opacity: .82; }
+
+    #settingsBackdrop {
+      position: fixed; inset: 0; z-index: 40; display: none; align-items: center; justify-content: center;
+      padding: 20px; background: rgba(0,0,0,.72); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    }
+    #settingsBackdrop.show { display: flex; }
+    #settingsPanel {
+      width: min(420px, 100%); border: 1px solid rgba(255,255,255,.16); border-radius: 18px;
+      padding: 20px; background: #151515; box-shadow: 0 18px 60px rgba(0,0,0,.5);
+    }
+    #settingsPanel h2 { margin: 0 0 8px; font-size: 20px; }
+    #settingsPanel p { margin: 0 0 18px; font-size: 13px; line-height: 1.4; opacity: .6; }
+    #settingsPanel label { display: block; margin-bottom: 7px; font-size: 13px; opacity: .8; }
+    #preferredLanguageInput {
+      width: 100%; height: 42px; border: 1px solid rgba(255,255,255,.14); border-radius: 10px;
+      padding: 0 12px; background: #080808; color: #fff; font: inherit; outline: none;
+    }
+    .settingsActions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+    .settingsActions button {
+      min-width: 78px; height: 38px; border: 0; border-radius: 10px; padding: 0 14px; font: inherit; cursor: pointer;
+    }
+    #settingsCancel { background: #2a2a2a; color: #fff; }
+    #settingsSave { background: #fff; color: #000; font-weight: 700; }
   </style>
 </head>
 <body>
 <div id="cinemaNotice"></div>
+
+<div id="settingsBackdrop">
+  <div id="settingsPanel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <h2 id="settingsTitle">Settings</h2>
+    <p>Choose your preferred subtitle language. SideSubs will automatically select the first compatible track in this language unless you choose a specific track for the current title.</p>
+    <label for="preferredLanguageInput">Preferred subtitle language</label>
+    <input id="preferredLanguageInput" list="languageSuggestions" inputmode="text" autocomplete="off" placeholder="e.g. es, en, fr">
+    <datalist id="languageSuggestions">
+      <option value="en">English</option><option value="es">Spanish</option><option value="fr">French</option>
+      <option value="de">German</option><option value="it">Italian</option><option value="pt">Portuguese</option>
+      <option value="nl">Dutch</option><option value="ja">Japanese</option><option value="ko">Korean</option>
+      <option value="zh">Chinese</option><option value="ar">Arabic</option><option value="ru">Russian</option>
+    </datalist>
+    <div class="settingsActions">
+      <button id="settingsCancel" type="button">Cancel</button>
+      <button id="settingsSave" type="button">Save</button>
+    </div>
+  </div>
+</div>
+
 <main>
   <div id="title">Connecting to Plex…</div>
   <div id="meta"></div>
@@ -101,10 +103,11 @@
 </main>
 
 <div id="controls">
-  <select id="sessionSelect" title="Plex session">
-    <option value="">📺 Session…</option>
-  </select>
+  <select id="sessionSelect" title="Plex session"><option value="">📺 Session…</option></select>
   <div class="divider"></div>
+  <select id="subtitleSelect" title="Subtitle track" disabled><option value="">💬 Subtitles…</option></select>
+  <div class="divider"></div>
+  <button id="settingsButton" type="button" title="Settings">⚙</button>
   <button id="cinemaButton" type="button" title="Cinema mode">▶ Cinema</button>
   <div class="divider"></div>
   <button id="delayMinus" type="button" title="Decrease delay">−</button>
@@ -120,6 +123,9 @@
   let controlsTimer = null;
   let subtitleDelayMs = Number(localStorage.getItem("subtitleDelayMs") || 1000);
   let selectedPlayerId = localStorage.getItem("selectedPlayerId") || "";
+  let preferredLanguage = localStorage.getItem("preferredSubtitleLanguage") || (navigator.language || "en").split("-")[0].toLowerCase();
+  let subtitleSelections = JSON.parse(localStorage.getItem("subtitleSelections") || "{}");
+  let currentRatingKey = "";
   let delayedQueue = [];
   let sessionRefreshTimer = null;
 
@@ -148,9 +154,56 @@
 
   function setSelectedPlayer(playerId) {
     selectedPlayerId = playerId || "";
+    currentRatingKey = "";
     delayedQueue = [];
     if (selectedPlayerId) localStorage.setItem("selectedPlayerId", selectedPlayerId);
     else localStorage.removeItem("selectedPlayerId");
+  }
+
+  function selectedSubtitleId() {
+    return currentRatingKey ? (subtitleSelections[currentRatingKey] || "") : "";
+  }
+
+  function saveSubtitleSelection(ratingKey, trackId) {
+    if (!ratingKey) return;
+    if (trackId) subtitleSelections[ratingKey] = trackId;
+    else delete subtitleSelections[ratingKey];
+    localStorage.setItem("subtitleSelections", JSON.stringify(subtitleSelections));
+    delayedQueue = [];
+  }
+
+  function subtitleLabel(track) {
+    const language = (track.language || "und").toUpperCase();
+    const source = track.source === "external" ? "SRT" : "MKV";
+    const title = track.title || track.codec || "Subtitle";
+    return `${language} · ${source} · ${title}${track.compatible ? "" : " · unsupported"}`;
+  }
+
+  function updateSubtitleSelector(data) {
+    const select = el("subtitleSelect");
+    const tracks = data.subtitle_tracks || [];
+    const previousRatingKey = currentRatingKey;
+    currentRatingKey = data.rating_key || "";
+
+    select.innerHTML = '<option value="">💬 Auto</option>';
+    for (const track of tracks) {
+      const option = document.createElement("option");
+      option.value = track.id;
+      option.textContent = subtitleLabel(track);
+      option.disabled = !track.compatible;
+      select.appendChild(option);
+    }
+
+    let manual = selectedSubtitleId();
+    if (manual && !tracks.some(track => track.id === manual && track.compatible)) {
+      saveSubtitleSelection(currentRatingKey, "");
+      manual = "";
+    }
+
+    select.disabled = tracks.length === 0;
+    select.value = manual || data.selected_subtitle_id || "";
+
+    if (previousRatingKey !== currentRatingKey) delayedQueue = [];
   }
 
   function notice(message) {
@@ -165,6 +218,17 @@
     window.clearTimeout(controlsTimer);
     el("controls").classList.remove("hidden-controls");
     controlsTimer = window.setTimeout(() => el("controls").classList.add("hidden-controls"), 2800);
+  }
+
+  function openSettings() {
+    el("preferredLanguageInput").value = preferredLanguage;
+    el("settingsBackdrop").classList.add("show");
+    window.clearTimeout(controlsTimer);
+  }
+
+  function closeSettings() {
+    el("settingsBackdrop").classList.remove("show");
+    showControls();
   }
 
   async function requestWakeLock() {
@@ -221,39 +285,56 @@
     else if (wakeOk) notice("Screen awake · no fullscreen");
   }
 
+  el("settingsButton").addEventListener("click", event => {
+    event.stopPropagation();
+    openSettings();
+  });
+  el("settingsCancel").addEventListener("click", closeSettings);
+  el("settingsSave").addEventListener("click", () => {
+    preferredLanguage = el("preferredLanguageInput").value.trim().toLowerCase();
+    localStorage.setItem("preferredSubtitleLanguage", preferredLanguage);
+    delayedQueue = [];
+    closeSettings();
+    notice(preferredLanguage ? `Preferred language: ${preferredLanguage.toUpperCase()}` : "Automatic language preference disabled");
+  });
+  el("settingsBackdrop").addEventListener("pointerdown", event => {
+    if (event.target === el("settingsBackdrop")) closeSettings();
+  });
+
   el("cinemaButton").addEventListener("click", async event => {
     event.stopPropagation();
     if (cinemaEnabled) await exitCinemaMode();
     else await enterCinemaMode();
   });
-
   el("delayMinus").addEventListener("click", event => {
     event.stopPropagation();
     setDelay(subtitleDelayMs - 250);
   });
-
   el("delayPlus").addEventListener("click", event => {
     event.stopPropagation();
     setDelay(subtitleDelayMs + 250);
   });
-
   el("sessionSelect").addEventListener("change", event => {
     event.stopPropagation();
     setSelectedPlayer(event.target.value);
-    if (selectedPlayerId) notice("Session selected");
-    else notice("No session selected");
+    notice(selectedPlayerId ? "Session selected" : "No session selected");
+    showControls();
+  });
+  el("subtitleSelect").addEventListener("change", event => {
+    event.stopPropagation();
+    const trackId = event.target.value;
+    saveSubtitleSelection(currentRatingKey, trackId);
+    notice(trackId ? "Subtitle track selected" : "Automatic subtitle selection");
     showControls();
   });
 
   document.addEventListener("pointerdown", showControls, { passive: true });
-
   document.addEventListener("visibilitychange", async () => {
     if (cinemaEnabled && document.visibilityState === "visible" && !wakeLock) {
       await requestWakeLock();
       showControls();
     }
   });
-
   document.addEventListener("fullscreenchange", () => {
     if (cinemaEnabled && !document.fullscreenElement) {
       notice("Fullscreen disabled · Wake Lock remains active when available");
@@ -266,6 +347,7 @@
     el("current").textContent = "—";
     el("next").textContent = "";
     el("status").textContent = message;
+    el("subtitleSelect").disabled = true;
   }
 
   function renderIdle() {
@@ -278,9 +360,11 @@
     el("current").textContent = "—";
     el("next").textContent = "";
     el("status").textContent = "The selected session is no longer active";
+    el("subtitleSelect").disabled = true;
   }
 
   function renderActive(data) {
+    updateSubtitleSelector(data);
     el("title").textContent = data.title || "Plex";
     el("meta").textContent = `${data.client || "Plex"} · ${formatTime(data.position)} · ${data.state || ""}`;
 
@@ -292,9 +376,9 @@
     }
 
     if (!data.subtitle_found) {
-      el("current").textContent = "No Spanish subtitles found";
+      el("current").textContent = "No compatible subtitles found";
       el("next").textContent = "";
-      el("status").textContent = data.subtitle_error || "No compatible subtitle track found";
+      el("status").textContent = data.subtitle_error || (data.subtitle_tracks?.length ? "Choose a compatible subtitle track" : "No subtitle tracks found");
       return;
     }
 
@@ -306,7 +390,6 @@
   function enqueueForDelayedRender(data) {
     const now = performance.now();
     delayedQueue.push({ due: now + subtitleDelayMs, data });
-
     while (delayedQueue.length > 1 && delayedQueue[1].due <= now) delayedQueue.shift();
 
     if (subtitleDelayMs === 0) {
@@ -314,7 +397,6 @@
       delayedQueue = [];
       return;
     }
-
     if (delayedQueue.length && delayedQueue[0].due <= now) {
       const item = delayedQueue.shift();
       item.data.active ? renderActive(item.data) : renderIdle();
@@ -330,8 +412,8 @@
       const sessions = data.sessions || [];
       const select = el("sessionSelect");
       const remembered = selectedPlayerId;
-
       select.innerHTML = '<option value="">📺 Session…</option>';
+
       for (const session of sessions) {
         const option = document.createElement("option");
         option.value = session.player_id;
@@ -350,7 +432,7 @@
         select.value = "";
       }
     } catch (_) {
-      // Keep the current selection and let /api/status surface connectivity errors.
+      // /api/status will surface connectivity errors.
     } finally {
       window.clearTimeout(sessionRefreshTimer);
       sessionRefreshTimer = window.setTimeout(refreshSessions, 2000);
@@ -359,8 +441,13 @@
 
   async function refresh() {
     try {
-      const url = `/api/status?player_id=${encodeURIComponent(selectedPlayerId)}`;
-      const response = await fetch(url, { cache: "no-store" });
+      const manualTrack = selectedSubtitleId();
+      const params = new URLSearchParams({
+        player_id: selectedPlayerId,
+        preferred_language: preferredLanguage,
+        subtitle_id: manualTrack,
+      });
+      const response = await fetch(`/api/status?${params.toString()}`, { cache: "no-store" });
       const data = await response.json();
       el("current").classList.remove("error");
       if (!data.ok) throw new Error(data.error || "Unknown error");
