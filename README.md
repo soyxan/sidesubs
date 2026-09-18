@@ -1,6 +1,6 @@
-# SubCompanion
+# SideSubs
 
-**SubCompanion** is a second-screen subtitle companion for Plex.
+**SideSubs** is a second-screen subtitle companion for Plex.
 
 It is designed for situations where you want subtitles on a phone or tablet while watching the actual video on another screen. A common use case is keeping English subtitles on the TV and displaying Spanish subtitles on your phone, but the TV does not need to show subtitles at all.
 
@@ -27,13 +27,13 @@ It is designed for situations where you want subtitles on a phone or tablet whil
 Every push to `main` is built automatically by GitHub Actions and published to GitHub Container Registry:
 
 ```text
-ghcr.io/soyxan/subcompanion:latest
+ghcr.io/soyxan/sidesubs:latest
 ```
 
 Each build also gets a commit-specific tag:
 
 ```text
-ghcr.io/soyxan/subcompanion:sha-abc1234
+ghcr.io/soyxan/sidesubs:sha-abc1234
 ```
 
 ## Docker Compose / Portainer
@@ -60,9 +60,9 @@ Example:
 
 ```yaml
 services:
-  subcompanion:
-    image: ghcr.io/soyxan/subcompanion:latest
-    container_name: subcompanion
+  sidesubs:
+    image: ghcr.io/soyxan/sidesubs:latest
+    container_name: sidesubs
     restart: unless-stopped
 
     ports:
@@ -92,17 +92,17 @@ http://YOUR-SERVER-IP:8085
 
 ## How it works
 
-1. SubCompanion asks Plex for the currently available playback sessions.
+1. SideSubs asks Plex for the currently available playback sessions.
 2. The web interface lets you explicitly choose the player you want to follow.
 3. The selected player ID is stored locally in that browser.
 4. Plex provides the playback position and media metadata.
-5. SubCompanion maps the Plex media path to the read-only media volume.
+5. SideSubs maps the Plex media path to the read-only media volume.
 6. It loads a compatible Spanish subtitle track, either from an external SRT or from an embedded text subtitle stream.
 7. The backend smooths coarse Plex position updates.
 8. The phone polls the backend and displays the synchronized current and next subtitles.
 9. An optional client-side delay lets the subtitle remain visible slightly after it appeared on the TV.
 
-If the selected Plex session disappears, SubCompanion does **not** silently switch to another player. The interface asks you to select a session again.
+If the selected Plex session disappears, SideSubs does **not** silently switch to another player. The interface asks you to select a session again.
 
 ## Subtitle support
 
@@ -124,7 +124,7 @@ If only one matching external SRT exists, it may be used as a fallback.
 
 ### Embedded subtitles
 
-SubCompanion can inspect subtitle streams inside media containers using FFprobe and extract compatible text-based Spanish streams with FFmpeg.
+SideSubs can inspect subtitle streams inside media containers using FFprobe and extract compatible text-based Spanish streams with FFmpeg.
 
 Supported text subtitle codecs include SRT/SubRip, ASS/SSA, WebVTT and mov_text.
 
@@ -150,7 +150,7 @@ returns:
 
 ## Security
 
-SubCompanion is intended for a trusted home LAN.
+SideSubs is intended for a trusted home LAN.
 
 - The Plex token stays server-side.
 - The browser never receives the Plex token.
