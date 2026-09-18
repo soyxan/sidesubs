@@ -130,6 +130,39 @@ Supported text subtitle codecs include SRT/SubRip, ASS/SSA, WebVTT and mov_text.
 
 Image-based subtitle formats such as PGS cannot currently be converted to text automatically.
 
+## Android client
+
+SideSubs also includes a minimal native Android client in the `android/` directory.
+
+The Android app is intentionally small: it wraps the SideSubs web interface in a full-screen `WebView`, keeps the screen awake while the app is open, and supports local HTTP URLs for trusted home-LAN deployments.
+
+On first launch, the app asks for the SideSubs server URL, for example:
+
+```text
+http://192.168.1.50:8085
+```
+
+The URL is stored locally on the device. To change it later, **long-press anywhere in the WebView** to reopen the server settings dialog.
+
+### Automatic APK builds
+
+GitHub Actions builds a debug APK automatically whenever the Android project changes. You can also run the **Build Android APK** workflow manually.
+
+The generated artifact is named:
+
+```text
+SideSubs-debug
+```
+
+and contains:
+
+```text
+app-debug.apk
+```
+
+No Android IDE is required to build the APK.
+
+
 ## Plex token
 
 See Plex's official guide:
