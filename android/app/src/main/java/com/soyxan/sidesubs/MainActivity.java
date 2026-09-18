@@ -7,6 +7,7 @@ import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.net.Uri;
+import android.net.http.SslError;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
@@ -16,10 +17,16 @@ import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.content.Context;
 import android.webkit.JavascriptInterface;
+import android.webkit.SslErrorHandler;
+import android.webkit.WebResourceError;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Button;
 import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 
 public class MainActivity extends Activity {
     private static final String PREFS = "sidesubs_settings";
@@ -37,7 +44,35 @@ public class MainActivity extends Activity {
 
         webView = new WebView(this);
         webView.setBackgroundColor(Color.BLACK);
-        webView.setWebViewClient(new WebViewClient());
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onReceivedError(
+                WebView view,
+                WebResourceRequest request,
+                WebResourceError error
+            ) {
+                super.onReceivedError(view, request, error);
+                if (request.isForMainFrame()) {
+                    showConnectionError(
+                        "Cannot connect to SideSubs",
+                        "Check that the server address is correct and that SideSubs is running."
+                    );
+                }
+            }
+
+            @Override
+            public void onReceivedSslError(
+                WebView view,
+                SslErrorHandler handler,
+                SslError error
+            ) {
+                handler.cancel();
+                showConnectionError(
+                    "Secure connection failed",
+                    "This server may be using HTTP instead of HTTPS, or its certificate may not be valid."
+                );
+            }
+        });
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -59,6 +94,64 @@ public class MainActivity extends Activity {
         } else {
             loadServer(savedUrl);
         }
+    }
+
+    private void showConnectionError(String title, String message) {
+        runOnUiThread(() -> {
+            String currentUrl = preferences.getString(KEY_SERVER_URL, "");
+
+            LinearLayout layout = new LinearLayout(this);
+            layout.setOrientation(LinearLayout.VERTICAL);
+            layout.setPadding(48, 64, 48, 48);
+            layout.setGravity(android.view.Gravity.CENTER_HORIZONTAL);
+            layout.setBackgroundColor(Color.BLACK);
+
+            TextView titleView = new TextView(this);
+            titleView.setText(title);
+            titleView.setTextColor(Color.WHITE);
+            titleView.setTextSize(22);
+            titleView.setGravity(android.view.Gravity.CENTER);
+            titleView.setPadding(0, 0, 0, 20);
+
+            TextView urlView = new TextView(this);
+            urlView.setText(currentUrl == null ? "" : currentUrl);
+            urlView.setTextColor(0xFFB0B0B0);
+            urlView.setTextSize(14);
+            urlView.setGravity(android.view.Gravity.CENTER);
+            urlView.setPadding(0, 0, 0, 18);
+
+            TextView messageView = new TextView(this);
+            messageView.setText(message);
+            messageView.setTextColor(0xFFD0D0D0);
+            messageView.setTextSize(15);
+            messageView.setGravity(android.view.Gravity.CENTER);
+            messageView.setPadding(0, 0, 0, 30);
+
+            Button retryButton = new Button(this);
+            retryButton.setText("Retry");
+            retryButton.setOnClickListener(view -> {
+                setContentView(webView);
+                if (currentUrl != null && !currentUrl.isEmpty()) {
+                    loadServer(currentUrl);
+                }
+            });
+
+            Button changeButton = new Button(this);
+            changeButton.setText("Change server");
+            changeButton.setOnClickListener(view -> {
+                setContentView(webView);
+                showServerSettings(false);
+            });
+
+            layout.addView(titleView);
+            layout.addView(urlView);
+            layout.addView(messageView);
+            layout.addView(retryButton);
+            layout.addView(changeButton);
+
+            setContentView(layout);
+            setCinemaMode(false);
+        });
     }
 
     private void showServerSettings(boolean required) {
