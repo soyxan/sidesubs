@@ -103,8 +103,15 @@ public class MainActivity extends Activity {
             LinearLayout layout = new LinearLayout(this);
             layout.setOrientation(LinearLayout.VERTICAL);
             layout.setPadding(48, 64, 48, 48);
-            layout.setGravity(android.view.Gravity.CENTER_HORIZONTAL);
+            layout.setGravity(android.view.Gravity.CENTER);
             layout.setBackgroundColor(Color.BLACK);
+
+            TextView iconView = new TextView(this);
+            iconView.setText("⚠");
+            iconView.setTextColor(0xFFFFC107);
+            iconView.setTextSize(56);
+            iconView.setGravity(android.view.Gravity.CENTER);
+            iconView.setPadding(0, 0, 0, 16);
 
             TextView titleView = new TextView(this);
             titleView.setText(title);
@@ -143,6 +150,7 @@ public class MainActivity extends Activity {
                 showServerSettings(false);
             });
 
+            layout.addView(iconView);
             layout.addView(titleView);
             layout.addView(urlView);
             layout.addView(messageView);
