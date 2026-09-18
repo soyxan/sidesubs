@@ -158,7 +158,6 @@
   let currentSubtitleTracks = [];
   let currentAutoSubtitleId = "";
   let delayedQueue = [];
-  let sessionRefreshTimer = null;
 
   function isNativeAndroid() {
     try {
@@ -298,41 +297,77 @@
     return button;
   }
 
-  function openSessionModal() {
+  async function openSessionModal() {
     const list = el("choiceList");
     list.replaceChildren();
     el("choiceTitle").textContent = "Plex session";
-
-    list.appendChild(choiceItem(
-      "No session",
-      "Stop following the currently selected player",
-      !selectedPlayerId,
-      false,
-      () => {
-        setSelectedPlayer("");
-        updateSessionButton();
-        renderNoSelection();
-        notice("No session selected");
-      }
-    ));
-
-    for (const session of currentSessions) {
-      const client = session.client || session.device || session.product || "Plex";
-      list.appendChild(choiceItem(
-        client,
-        session.title || "Playback",
-        session.player_id === selectedPlayerId,
-        false,
-        () => {
-          setSelectedPlayer(session.player_id);
-          updateSessionButton();
-          notice("Session selected");
-        }
-      ));
-    }
-
     el("choiceBackdrop").classList.add("show");
     window.clearTimeout(controlsTimer);
+
+    list.appendChild(choiceItem(
+      "Loading sessions…",
+      "Checking Plex now",
+      false,
+      true,
+      () => {}
+    ));
+
+    try {
+      const response = await fetch("/api/sessions", { cache: "no-store" });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error || "Unable to load sessions");
+
+      currentSessions = data.sessions || [];
+      updateSessionButton();
+      list.replaceChildren();
+
+      list.appendChild(choiceItem(
+        "No session",
+        "Stop following the currently selected player",
+        !selectedPlayerId,
+        false,
+        () => {
+          setSelectedPlayer("");
+          updateSessionButton();
+          renderNoSelection();
+          notice("No session selected");
+        }
+      ));
+
+      for (const session of currentSessions) {
+        const client = session.client || session.device || session.product || "Plex";
+        list.appendChild(choiceItem(
+          client,
+          session.title || "Playback",
+          session.player_id === selectedPlayerId,
+          false,
+          () => {
+            setSelectedPlayer(session.player_id);
+            updateSessionButton();
+            notice("Session selected");
+          }
+        ));
+      }
+
+      if (!currentSessions.length) {
+        list.appendChild(choiceItem(
+          "No active Plex sessions",
+          "Start playback in Plex and reopen this selector",
+          false,
+          true,
+          () => {}
+        ));
+      }
+    } catch (error) {
+      list.replaceChildren();
+      list.appendChild(choiceItem(
+        "Unable to load sessions",
+        error.message || "Could not contact Plex",
+        false,
+        true,
+        () => {}
+      ));
+    }
   }
 
   function openSubtitleModal() {
@@ -575,33 +610,6 @@
     }
   }
 
-  async function refreshSessions() {
-    try {
-      const response = await fetch("/api/sessions", { cache: "no-store" });
-      const data = await response.json();
-      if (!data.ok) return;
-
-      const sessions = data.sessions || [];
-      const remembered = selectedPlayerId;
-      currentSessions = sessions;
-
-      if (remembered && sessions.some(item => item.player_id === remembered)) {
-        updateSessionButton();
-      } else if (remembered) {
-        setSelectedPlayer("");
-        updateSessionButton();
-        renderNoSelection("The saved session is no longer active");
-      } else {
-        updateSessionButton();
-      }
-    } catch (_) {
-      // /api/status will surface connectivity errors.
-    } finally {
-      window.clearTimeout(sessionRefreshTimer);
-      sessionRefreshTimer = window.setTimeout(refreshSessions, 2000);
-    }
-  }
-
   async function refresh() {
     try {
       const manualTrack = selectedSubtitleId();
@@ -630,7 +638,7 @@
 
   updateDelayLabel();
   showControls();
-  refreshSessions();
+  updateSessionButton();
   refresh();
 </script>
 </body>
