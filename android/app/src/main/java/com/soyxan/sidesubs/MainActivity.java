@@ -3,6 +3,7 @@ package com.soyxan.sidesubs;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.SharedPreferences;
+import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.net.Uri;
@@ -14,11 +15,11 @@ import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.content.Context;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.EditText;
-import android.widget.Toast;
 
 public class MainActivity extends Activity {
     private static final String PREFS = "sidesubs_settings";
@@ -26,12 +27,12 @@ public class MainActivity extends Activity {
 
     private WebView webView;
     private SharedPreferences preferences;
+    private boolean cinemaMode = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
 
         webView = new WebView(this);
@@ -42,6 +43,7 @@ public class MainActivity extends Activity {
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
+        webView.addJavascriptInterface(new SideSubsBridge(), "SideSubsAndroid");
 
         webView.setOnLongClickListener(view -> {
             showServerSettings(false);
@@ -49,7 +51,7 @@ public class MainActivity extends Activity {
         });
 
         setContentView(webView);
-        enterImmersiveMode();
+        exitImmersiveMode();
 
         String savedUrl = preferences.getString(KEY_SERVER_URL, "");
         if (savedUrl == null || savedUrl.trim().isEmpty()) {
@@ -104,8 +106,47 @@ public class MainActivity extends Activity {
             }, 150);
         });
 
-        dialog.setOnDismissListener(ignored -> enterImmersiveMode());
+        dialog.setOnDismissListener(ignored -> applyCinemaUi());
         dialog.show();
+    }
+
+    private class SideSubsBridge {
+        @JavascriptInterface
+        public boolean isNativeApp() {
+            return true;
+        }
+
+        @JavascriptInterface
+        public void enterCinemaMode() {
+            runOnUiThread(() -> setCinemaMode(true));
+        }
+
+        @JavascriptInterface
+        public void exitCinemaMode() {
+            runOnUiThread(() -> setCinemaMode(false));
+        }
+    }
+
+    private void setCinemaMode(boolean enabled) {
+        cinemaMode = enabled;
+
+        if (enabled) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+            enterImmersiveMode();
+        } else {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+            exitImmersiveMode();
+        }
+    }
+
+    private void applyCinemaUi() {
+        if (cinemaMode) {
+            enterImmersiveMode();
+        } else {
+            exitImmersiveMode();
+        }
     }
 
     private String normalizeUrl(String value) {
@@ -155,24 +196,36 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void exitImmersiveMode() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            getWindow().setDecorFitsSystemWindows(true);
+            WindowInsetsController controller = getWindow().getInsetsController();
+            if (controller != null) {
+                controller.show(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+            }
+        } else {
+            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+        }
+    }
+
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        enterImmersiveMode();
+        applyCinemaUi();
     }
 
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) {
-            enterImmersiveMode();
+            applyCinemaUi();
         }
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        enterImmersiveMode();
+        applyCinemaUi();
     }
 
     @Override
