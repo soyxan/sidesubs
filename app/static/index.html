@@ -63,6 +63,11 @@
       width: 100%; height: 42px; border: 1px solid rgba(255,255,255,.14); border-radius: 10px;
       padding: 0 12px; background: #080808; color: #fff; font: inherit; outline: none;
     }
+    #appSettingsButton {
+      display: none; width: 100%; height: 40px; margin-top: 14px; border: 1px solid rgba(255,255,255,.14);
+      border-radius: 10px; background: #0d0d0d; color: #fff; font: inherit; text-align: left; padding: 0 12px;
+    }
+    #appSettingsButton.show { display: block; }
     .settingsActions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
     .settingsActions button {
       min-width: 78px; height: 38px; border: 0; border-radius: 10px; padding: 0 14px; font: inherit; cursor: pointer;
@@ -105,6 +110,7 @@
       <option value="nl">Dutch</option><option value="ja">Japanese</option><option value="ko">Korean</option>
       <option value="zh">Chinese</option><option value="ar">Arabic</option><option value="ru">Russian</option>
     </datalist>
+    <button id="appSettingsButton" type="button">App settings</button>
     <div class="settingsActions">
       <button id="settingsCancel" type="button">Cancel</button>
       <button id="settingsSave" type="button">Save</button>
@@ -255,6 +261,7 @@
 
   function openSettings() {
     el("preferredLanguageInput").value = preferredLanguage;
+    el("appSettingsButton").classList.toggle("show", isNativeAndroid());
     el("settingsBackdrop").classList.add("show");
     window.clearTimeout(controlsTimer);
   }
@@ -498,6 +505,11 @@
     openSettings();
   });
   el("settingsCancel").addEventListener("click", closeSettings);
+  el("appSettingsButton").addEventListener("click", () => {
+    if (!isNativeAndroid()) return;
+    closeSettings();
+    window.SideSubsAndroid.openAppSettings();
+  });
   el("settingsSave").addEventListener("click", () => {
     preferredLanguage = el("preferredLanguageInput").value.trim().toLowerCase();
     localStorage.setItem("preferredSubtitleLanguage", preferredLanguage);
