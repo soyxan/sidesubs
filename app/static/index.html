@@ -663,6 +663,11 @@
   updateDelayLabel();
   showControls();
   updateSessionButton();
+
+  if (isNativeAndroid() && typeof window.SideSubsAndroid.pageReady === "function") {
+    window.SideSubsAndroid.pageReady();
+  }
+
   refresh();
 </script>
 </body>
