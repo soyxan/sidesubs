@@ -59,19 +59,23 @@
     #settingsPanel h2 { margin: 0 0 8px; font-size: 20px; }
     #settingsPanel p { margin: 0 0 18px; font-size: 13px; line-height: 1.4; opacity: .6; }
     #settingsPanel label { display: block; margin-bottom: 7px; font-size: 13px; opacity: .8; }
-    #preferredLanguageInput {
-      width: 100%; height: 42px; border: 1px solid rgba(255,255,255,.14); border-radius: 10px;
-      padding: 0 12px; background: #080808; color: #fff; font: inherit; outline: none;
+    #preferredLanguageButton {
+      width: 100%; min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      border: 1px solid rgba(255,255,255,.14); border-radius: 10px;
+      padding: 0 12px; background: #080808; color: #fff; font: inherit; text-align: left;
     }
-    #appSettingsBlock { margin-top: 14px; }
-    #appSettingsButton {
-      width: 100%; min-height: 40px; border: 1px solid rgba(255,255,255,.14);
-      border-radius: 10px; background: #0d0d0d; color: #fff; font: inherit; text-align: left; padding: 10px 12px;
+    #preferredLanguageButton .selectorChevron { opacity: .5; font-size: 18px; }
+    #appSettingsBlock {
+      margin-top: 22px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,.10);
     }
+    #appSettingsTitle { margin: 0 0 5px; font-size: 14px; font-weight: 700; }
     #appSettingsHint {
-      display: none; margin: 7px 2px 0; font-size: 12px; line-height: 1.35; opacity: .52;
+      margin: 0 0 12px; font-size: 12px; line-height: 1.4; opacity: .56;
     }
-    #appSettingsHint.show { display: block; }
+    #appSettingsButton {
+      min-height: 38px; border: 0; border-radius: 10px; background: #fff; color: #000;
+      font: inherit; font-weight: 700; padding: 0 14px;
+    }
     .settingsActions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
     .settingsActions button {
       min-width: 78px; height: 38px; border: 0; border-radius: 10px; padding: 0 14px; font: inherit; cursor: pointer;
@@ -106,17 +110,15 @@
   <div id="settingsPanel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
     <h2 id="settingsTitle">Settings</h2>
     <p>Choose your preferred subtitle language. SideSubs will automatically select the first compatible track in this language unless you choose a specific track for the current title.</p>
-    <label for="preferredLanguageInput">Preferred subtitle language</label>
-    <input id="preferredLanguageInput" list="languageSuggestions" inputmode="text" autocomplete="off" placeholder="e.g. es, en, fr">
-    <datalist id="languageSuggestions">
-      <option value="en">English</option><option value="es">Spanish</option><option value="fr">French</option>
-      <option value="de">German</option><option value="it">Italian</option><option value="pt">Portuguese</option>
-      <option value="nl">Dutch</option><option value="ja">Japanese</option><option value="ko">Korean</option>
-      <option value="zh">Chinese</option><option value="ar">Arabic</option><option value="ru">Russian</option>
-    </datalist>
+    <label for="preferredLanguageButton">Preferred subtitle language</label>
+    <button id="preferredLanguageButton" type="button">
+      <span id="preferredLanguageLabel">Spanish (es)</span>
+      <span class="selectorChevron">›</span>
+    </button>
     <div id="appSettingsBlock">
-      <button id="appSettingsButton" type="button">App settings</button>
+      <div id="appSettingsTitle">SideSubs for Android</div>
       <div id="appSettingsHint">Use the SideSubs Android app for native app settings and Cinema mode.</div>
+      <button id="appSettingsButton" type="button">Get Android app →</button>
     </div>
     <div class="settingsActions">
       <button id="settingsCancel" type="button">Cancel</button>
@@ -171,6 +173,23 @@
   let currentSubtitleTracks = [];
   let currentAutoSubtitleId = "";
   let delayedQueue = [];
+  let settingsLanguageDraft = preferredLanguage;
+
+  const subtitleLanguages = [
+    ["", "Automatic"],
+    ["en", "English"],
+    ["es", "Spanish"],
+    ["fr", "French"],
+    ["de", "German"],
+    ["it", "Italian"],
+    ["pt", "Portuguese"],
+    ["nl", "Dutch"],
+    ["ja", "Japanese"],
+    ["ko", "Korean"],
+    ["zh", "Chinese"],
+    ["ar", "Arabic"],
+    ["ru", "Russian"],
+  ];
 
   function isNativeAndroid() {
     try {
@@ -266,11 +285,47 @@
     controlsTimer = window.setTimeout(() => el("controls").classList.add("hidden-controls"), 2800);
   }
 
+  function languageDisplayName(code) {
+    const match = subtitleLanguages.find(([value]) => value === code);
+    if (!match) return code ? code.toUpperCase() : "Automatic";
+    return match[0] ? `${match[1]} (${match[0]})` : "Automatic";
+  }
+
+  function updatePreferredLanguageButton() {
+    el("preferredLanguageLabel").textContent = languageDisplayName(settingsLanguageDraft);
+  }
+
+  function openLanguageModal() {
+    const list = el("choiceList");
+    list.replaceChildren();
+    el("choiceTitle").textContent = "Preferred subtitle language";
+
+    for (const [code, name] of subtitleLanguages) {
+      list.appendChild(choiceItem(
+        code ? `${name} (${code})` : "Automatic",
+        code ? "Prefer this language when selecting subtitles automatically" : "Use the first compatible subtitle track",
+        code === settingsLanguageDraft,
+        false,
+        () => {
+          settingsLanguageDraft = code;
+          updatePreferredLanguageButton();
+        }
+      ));
+    }
+
+    el("choiceBackdrop").classList.add("show");
+    window.clearTimeout(controlsTimer);
+  }
+
   function openSettings() {
-    el("preferredLanguageInput").value = preferredLanguage;
+    settingsLanguageDraft = preferredLanguage;
+    updatePreferredLanguageButton();
     const nativeApp = isNativeAndroid();
-    el("appSettingsButton").textContent = nativeApp ? "App settings" : "Get the Android app";
-    el("appSettingsHint").classList.toggle("show", !nativeApp);
+    el("appSettingsTitle").textContent = nativeApp ? "Android app" : "SideSubs for Android";
+    el("appSettingsHint").textContent = nativeApp
+      ? "Configure the SideSubs server and native app options."
+      : "Use the SideSubs Android app for native app settings and Cinema mode.";
+    el("appSettingsButton").textContent = nativeApp ? "App settings" : "Get Android app →";
     el("settingsBackdrop").classList.add("show");
     window.clearTimeout(controlsTimer);
   }
@@ -283,7 +338,7 @@
   function closeChoiceModal() {
     el("choiceBackdrop").classList.remove("show");
     el("choiceList").replaceChildren();
-    showControls();
+    if (!el("settingsBackdrop").classList.contains("show")) showControls();
   }
 
   function choiceItem(primary, secondary, active, disabled, onChoose) {
@@ -514,6 +569,10 @@
     openSettings();
   });
   el("settingsCancel").addEventListener("click", closeSettings);
+  el("preferredLanguageButton").addEventListener("click", event => {
+    event.stopPropagation();
+    openLanguageModal();
+  });
   el("appSettingsButton").addEventListener("click", () => {
     closeSettings();
     if (isNativeAndroid()) {
@@ -523,7 +582,7 @@
     window.location.href = "https://github.com/soyxan/sidesubs/releases";
   });
   el("settingsSave").addEventListener("click", () => {
-    preferredLanguage = el("preferredLanguageInput").value.trim().toLowerCase();
+    preferredLanguage = settingsLanguageDraft;
     localStorage.setItem("preferredSubtitleLanguage", preferredLanguage);
     delayedQueue = [];
     closeSettings();
