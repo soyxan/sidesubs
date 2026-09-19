@@ -145,10 +145,7 @@ public class MainActivity extends Activity {
 
             Button changeButton = new Button(this);
             changeButton.setText("Change server");
-            changeButton.setOnClickListener(view -> {
-                setContentView(webView);
-                showServerSettings(false);
-            });
+            changeButton.setOnClickListener(view -> showServerSettings(false));
 
             layout.addView(iconView);
             layout.addView(titleView);
@@ -194,6 +191,7 @@ public class MainActivity extends Activity {
 
                 preferences.edit().putString(KEY_SERVER_URL, normalized).apply();
                 dialog.dismiss();
+                setContentView(webView);
                 loadServer(normalized);
             });
 
