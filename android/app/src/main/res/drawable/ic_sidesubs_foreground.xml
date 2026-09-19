@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Main movie screen -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M20,27 L80,27 Q86,27 86,33 L86,70 Q86,76 80,76 L20,76 Q14,76 14,70 L14,33 Q14,27 20,27 Z"
+        android:strokeColor="#F5F5F5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="5" />
+
+    <!-- Playback indicator -->
+    <path
+        android:fillColor="#E5A00D"
+        android:pathData="M43,40 Q43,38 45,39 L62,49 Q64,50 62,52 L45,62 Q43,63 43,60 Z" />
+
+    <!-- Phone / second screen -->
+    <path
+        android:fillColor="#111111"
+        android:pathData="M69,55 L88,55 Q93,55 93,60 L93,88 Q93,93 88,93 L69,93 Q64,93 64,88 L64,60 Q64,55 69,55 Z"
+        android:strokeColor="#F5F5F5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="5" />
+
+    <!-- Subtitle lines -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M71,68 L86,68"
+        android:strokeColor="#F5F5F5"
+        android:strokeLineCap="round"
+        android:strokeWidth="4" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M71,76 L86,76"
+        android:strokeColor="#F5F5F5"
+        android:strokeLineCap="round"
+        android:strokeWidth="4" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M71,84 L82,84"
+        android:strokeColor="#F5F5F5"
+        android:strokeLineCap="round"
+        android:strokeWidth="4" />
+</vector>
