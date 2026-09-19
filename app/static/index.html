@@ -63,11 +63,15 @@
       width: 100%; height: 42px; border: 1px solid rgba(255,255,255,.14); border-radius: 10px;
       padding: 0 12px; background: #080808; color: #fff; font: inherit; outline: none;
     }
+    #appSettingsBlock { margin-top: 14px; }
     #appSettingsButton {
-      display: none; width: 100%; height: 40px; margin-top: 14px; border: 1px solid rgba(255,255,255,.14);
-      border-radius: 10px; background: #0d0d0d; color: #fff; font: inherit; text-align: left; padding: 0 12px;
+      width: 100%; min-height: 40px; border: 1px solid rgba(255,255,255,.14);
+      border-radius: 10px; background: #0d0d0d; color: #fff; font: inherit; text-align: left; padding: 10px 12px;
     }
-    #appSettingsButton.show { display: block; }
+    #appSettingsHint {
+      display: none; margin: 7px 2px 0; font-size: 12px; line-height: 1.35; opacity: .52;
+    }
+    #appSettingsHint.show { display: block; }
     .settingsActions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
     .settingsActions button {
       min-width: 78px; height: 38px; border: 0; border-radius: 10px; padding: 0 14px; font: inherit; cursor: pointer;
@@ -110,7 +114,10 @@
       <option value="nl">Dutch</option><option value="ja">Japanese</option><option value="ko">Korean</option>
       <option value="zh">Chinese</option><option value="ar">Arabic</option><option value="ru">Russian</option>
     </datalist>
-    <button id="appSettingsButton" type="button">App settings</button>
+    <div id="appSettingsBlock">
+      <button id="appSettingsButton" type="button">App settings</button>
+      <div id="appSettingsHint">Use the SideSubs Android app for native app settings and Cinema mode.</div>
+    </div>
     <div class="settingsActions">
       <button id="settingsCancel" type="button">Cancel</button>
       <button id="settingsSave" type="button">Save</button>
@@ -261,7 +268,9 @@
 
   function openSettings() {
     el("preferredLanguageInput").value = preferredLanguage;
-    el("appSettingsButton").classList.toggle("show", isNativeAndroid());
+    const nativeApp = isNativeAndroid();
+    el("appSettingsButton").textContent = nativeApp ? "App settings" : "Get the Android app";
+    el("appSettingsHint").classList.toggle("show", !nativeApp);
     el("settingsBackdrop").classList.add("show");
     window.clearTimeout(controlsTimer);
   }
@@ -506,9 +515,12 @@
   });
   el("settingsCancel").addEventListener("click", closeSettings);
   el("appSettingsButton").addEventListener("click", () => {
-    if (!isNativeAndroid()) return;
     closeSettings();
-    window.SideSubsAndroid.openAppSettings();
+    if (isNativeAndroid()) {
+      window.SideSubsAndroid.openAppSettings();
+      return;
+    }
+    window.location.href = "https://github.com/soyxan/sidesubs/releases";
   });
   el("settingsSave").addEventListener("click", () => {
     preferredLanguage = el("preferredLanguageInput").value.trim().toLowerCase();
