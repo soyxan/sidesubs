@@ -10,6 +10,8 @@ import android.net.Uri;
 import android.net.http.SslError;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
@@ -32,9 +34,13 @@ public class MainActivity extends Activity {
     private static final String PREFS = "sidesubs_settings";
     private static final String KEY_SERVER_URL = "server_url";
 
+    private static final long PAGE_READY_TIMEOUT_MS = 10_000L;
+
     private WebView webView;
     private SharedPreferences preferences;
     private boolean cinemaMode = false;
+    private final Handler readinessHandler = new Handler(Looper.getMainLooper());
+    private Runnable readinessTimeout;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -92,6 +98,7 @@ public class MainActivity extends Activity {
     }
 
     private void showConnectionError(String title, String message) {
+        cancelReadinessTimeout();
         runOnUiThread(() -> {
             String currentUrl = preferences.getString(KEY_SERVER_URL, "");
 
@@ -224,6 +231,11 @@ public class MainActivity extends Activity {
         public void openAppSettings() {
             runOnUiThread(() -> showServerSettings(false));
         }
+
+        @JavascriptInterface
+        public void pageReady() {
+            runOnUiThread(() -> cancelReadinessTimeout());
+        }
     }
 
     private void setCinemaMode(boolean enabled) {
@@ -270,7 +282,24 @@ public class MainActivity extends Activity {
     }
 
     private void loadServer(String url) {
+        startReadinessTimeout();
         webView.loadUrl(url);
+    }
+
+    private void startReadinessTimeout() {
+        cancelReadinessTimeout();
+        readinessTimeout = () -> showConnectionError(
+            "SideSubs did not start",
+            "The server responded, but the SideSubs interface did not become ready. Check the server address and try again."
+        );
+        readinessHandler.postDelayed(readinessTimeout, PAGE_READY_TIMEOUT_MS);
+    }
+
+    private void cancelReadinessTimeout() {
+        if (readinessTimeout != null) {
+            readinessHandler.removeCallbacks(readinessTimeout);
+            readinessTimeout = null;
+        }
     }
 
     private void enterImmersiveMode() {
@@ -339,6 +368,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        cancelReadinessTimeout();
         if (webView != null) {
             webView.destroy();
         }
