@@ -80,11 +80,6 @@ public class MainActivity extends Activity {
         settings.setMediaPlaybackRequiresUserGesture(false);
         webView.addJavascriptInterface(new SideSubsBridge(), "SideSubsAndroid");
 
-        webView.setOnLongClickListener(view -> {
-            showServerSettings(false);
-            return true;
-        });
-
         setContentView(webView);
         exitImmersiveMode();
 
@@ -223,6 +218,11 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void exitCinemaMode() {
             runOnUiThread(() -> setCinemaMode(false));
+        }
+
+        @JavascriptInterface
+        public void openAppSettings() {
+            runOnUiThread(() -> showServerSettings(false));
         }
     }
 
