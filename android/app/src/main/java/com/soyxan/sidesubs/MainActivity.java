@@ -28,6 +28,7 @@ import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 
 public class MainActivity extends Activity {
@@ -86,7 +87,9 @@ public class MainActivity extends Activity {
         settings.setMediaPlaybackRequiresUserGesture(false);
         webView.addJavascriptInterface(new SideSubsBridge(), "SideSubsAndroid");
 
-        setContentView(webView);
+        LinearLayout initialView = new LinearLayout(this);
+        initialView.setBackgroundColor(Color.BLACK);
+        setContentView(initialView);
         exitImmersiveMode();
 
         String savedUrl = preferences.getString(KEY_SERVER_URL, "");
@@ -139,7 +142,6 @@ public class MainActivity extends Activity {
             Button retryButton = new Button(this);
             retryButton.setText("Retry");
             retryButton.setOnClickListener(view -> {
-                setContentView(webView);
                 if (currentUrl != null && !currentUrl.isEmpty()) {
                     loadServer(currentUrl);
                 }
@@ -193,7 +195,6 @@ public class MainActivity extends Activity {
 
                 preferences.edit().putString(KEY_SERVER_URL, normalized).apply();
                 dialog.dismiss();
-                setContentView(webView);
                 loadServer(normalized);
             });
 
@@ -234,7 +235,11 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void pageReady() {
-            runOnUiThread(() -> cancelReadinessTimeout());
+            runOnUiThread(() -> {
+                cancelReadinessTimeout();
+                setContentView(webView);
+                applyCinemaUi();
+            });
         }
     }
 
@@ -282,8 +287,44 @@ public class MainActivity extends Activity {
     }
 
     private void loadServer(String url) {
+        showConnecting(url);
         startReadinessTimeout();
         webView.loadUrl(url);
+    }
+
+    private void showConnecting(String url) {
+        runOnUiThread(() -> {
+            LinearLayout layout = new LinearLayout(this);
+            layout.setOrientation(LinearLayout.VERTICAL);
+            layout.setGravity(android.view.Gravity.CENTER);
+            layout.setPadding(48, 64, 48, 48);
+            layout.setBackgroundColor(Color.BLACK);
+
+            ProgressBar spinner = new ProgressBar(this);
+            LinearLayout.LayoutParams spinnerParams = new LinearLayout.LayoutParams(64, 64);
+            spinnerParams.bottomMargin = 28;
+            spinner.setLayoutParams(spinnerParams);
+
+            TextView titleView = new TextView(this);
+            titleView.setText("Connecting to SideSubs Server");
+            titleView.setTextColor(Color.WHITE);
+            titleView.setTextSize(20);
+            titleView.setGravity(android.view.Gravity.CENTER);
+            titleView.setPadding(0, 0, 0, 12);
+
+            TextView urlView = new TextView(this);
+            urlView.setText(url == null ? "" : url);
+            urlView.setTextColor(0xFF9E9E9E);
+            urlView.setTextSize(14);
+            urlView.setGravity(android.view.Gravity.CENTER);
+
+            layout.addView(spinner);
+            layout.addView(titleView);
+            layout.addView(urlView);
+
+            setContentView(layout);
+            setCinemaMode(false);
+        });
     }
 
     private void startReadinessTimeout() {
