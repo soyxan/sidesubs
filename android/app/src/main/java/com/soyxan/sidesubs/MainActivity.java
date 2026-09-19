@@ -29,6 +29,7 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 public class MainActivity extends Activity {
@@ -164,17 +165,58 @@ public class MainActivity extends Activity {
     }
 
     private void showServerSettings(boolean required) {
+        int horizontalPadding = dp(24);
+        int verticalPadding = dp(8);
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(horizontalPadding, verticalPadding, horizontalPadding, dp(4));
+
+        TextView sectionTitle = new TextView(this);
+        sectionTitle.setText("Server");
+        sectionTitle.setTextColor(Color.WHITE);
+        sectionTitle.setTextSize(14);
+        sectionTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        sectionTitle.setPadding(0, dp(4), 0, dp(6));
+
+        TextView fieldLabel = new TextView(this);
+        fieldLabel.setText("SideSubs server URL");
+        fieldLabel.setTextColor(0xFFD8D8D8);
+        fieldLabel.setTextSize(13);
+        fieldLabel.setPadding(0, 0, 0, dp(6));
+
         final EditText input = new EditText(this);
         input.setSingleLine(true);
         input.setHint("http://192.168.1.50:8085");
         input.setText(preferences.getString(KEY_SERVER_URL, ""));
         input.setSelectAllOnFocus(false);
-        input.setPadding(48, 24, 48, 24);
+        input.setTextColor(Color.WHITE);
+        input.setHintTextColor(0xFF777777);
+        input.setTextSize(15);
+        input.setPadding(dp(12), dp(10), dp(12), dp(10));
+
+        TextView helper = new TextView(this);
+        helper.setText("Address of the SideSubs web interface. HTTP and HTTPS are supported.");
+        helper.setTextColor(0xFF9E9E9E);
+        helper.setTextSize(12);
+        helper.setLineSpacing(0, 1.12f);
+        helper.setPadding(0, dp(7), 0, dp(4));
+
+        content.addView(sectionTitle);
+        content.addView(fieldLabel);
+        content.addView(input, new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
+        content.addView(helper);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.addView(content);
 
         AlertDialog.Builder builder = new AlertDialog.Builder(this)
-            .setTitle("SideSubs server")
-            .setMessage("Enter the URL of your SideSubs web interface.")
-            .setView(input)
+            .setTitle("App settings")
+            .setView(scroll)
             .setPositiveButton("Save", null);
 
         if (!required) {
@@ -210,6 +252,10 @@ public class MainActivity extends Activity {
 
         dialog.setOnDismissListener(ignored -> applyCinemaUi());
         dialog.show();
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
     private class SideSubsBridge {
