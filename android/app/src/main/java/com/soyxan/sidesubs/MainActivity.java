@@ -276,7 +276,13 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public String getAppVersion() {
-            return BuildConfig.VERSION_NAME;
+            try {
+                return getPackageManager()
+                    .getPackageInfo(getPackageName(), 0)
+                    .versionName;
+            } catch (Exception error) {
+                return "Unknown";
+            }
         }
 
         @JavascriptInterface
