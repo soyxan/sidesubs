@@ -32,17 +32,27 @@ import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import org.json.JSONObject;
+
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+
 public class MainActivity extends Activity {
     private static final String PREFS = "sidesubs_settings";
     private static final String KEY_SERVER_URL = "server_url";
 
     private static final long PAGE_READY_TIMEOUT_MS = 10_000L;
+    private static final int SERVER_CHECK_TIMEOUT_MS = 5_000;
+    private static final int SUPPORTED_API_VERSION = 1;
 
     private WebView webView;
     private SharedPreferences preferences;
     private boolean cinemaMode = false;
     private final Handler readinessHandler = new Handler(Looper.getMainLooper());
     private Runnable readinessTimeout;
+    private int loadGeneration = 0;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -333,9 +343,89 @@ public class MainActivity extends Activity {
     }
 
     private void loadServer(String url) {
+        final int requestGeneration = ++loadGeneration;
         showConnecting(url);
-        startReadinessTimeout();
-        webView.loadUrl(url);
+
+        new Thread(() -> {
+            try {
+                URL infoUrl = new URL(url + "/api/app-info");
+                HttpURLConnection connection = (HttpURLConnection) infoUrl.openConnection();
+                connection.setRequestMethod("GET");
+                connection.setConnectTimeout(SERVER_CHECK_TIMEOUT_MS);
+                connection.setReadTimeout(SERVER_CHECK_TIMEOUT_MS);
+                connection.setUseCaches(false);
+                connection.setInstanceFollowRedirects(false);
+
+                int statusCode = connection.getResponseCode();
+                if (statusCode != HttpURLConnection.HTTP_OK) {
+                    connection.disconnect();
+                    showServerValidationError(
+                        requestGeneration,
+                        "Not a SideSubs server",
+                        "The server responded, but /api/app-info did not return a valid SideSubs response."
+                    );
+                    return;
+                }
+
+                StringBuilder body = new StringBuilder();
+                try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(connection.getInputStream())
+                )) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        body.append(line);
+                    }
+                } finally {
+                    connection.disconnect();
+                }
+
+                JSONObject payload = new JSONObject(body.toString());
+                String appName = payload.optString("app", "");
+                int apiVersion = payload.optInt("api_version", -1);
+
+                if (!"SideSubs".equals(appName)) {
+                    showServerValidationError(
+                        requestGeneration,
+                        "Not a SideSubs server",
+                        "The address is reachable, but it does not identify itself as SideSubs."
+                    );
+                    return;
+                }
+
+                if (apiVersion != SUPPORTED_API_VERSION) {
+                    showServerValidationError(
+                        requestGeneration,
+                        "Incompatible SideSubs server",
+                        "This app requires SideSubs API " + SUPPORTED_API_VERSION
+                            + ", but the server provides API " + apiVersion + "."
+                    );
+                    return;
+                }
+
+                runOnUiThread(() -> {
+                    if (requestGeneration != loadGeneration) {
+                        return;
+                    }
+                    startReadinessTimeout();
+                    webView.loadUrl(url);
+                });
+            } catch (Exception error) {
+                showServerValidationError(
+                    requestGeneration,
+                    "Cannot connect to SideSubs",
+                    "The server could not be verified. Check the address, network connection and that SideSubs is running."
+                );
+            }
+        }).start();
+    }
+
+    private void showServerValidationError(int requestGeneration, String title, String message) {
+        runOnUiThread(() -> {
+            if (requestGeneration != loadGeneration) {
+                return;
+            }
+            showConnectionError(title, message);
+        });
     }
 
     private void showConnecting(String url) {
