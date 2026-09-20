@@ -62,6 +62,10 @@ class Cue:
 app = FastAPI(title="SideSubs", docs_url=None, redoc_url=None)
 STATIC_DIR = Path(__file__).parent / "static"
 
+APP_ID = "SideSubs"
+API_VERSION = 1
+APP_VERSION = os.getenv("SIDESUBS_VERSION", "dev").strip() or "dev"
+
 TEXT_SUBTITLE_CODECS = {"subrip", "srt", "ass", "ssa", "webvtt", "mov_text"}
 LANGUAGE_ALIASES = {
     "english": "en", "eng": "en",
@@ -480,6 +484,15 @@ def index():
 @app.get("/api/health")
 def health():
     return {"ok": True}
+
+
+@app.get("/api/app-info")
+def app_info():
+    return {
+        "app": APP_ID,
+        "api_version": API_VERSION,
+        "version": APP_VERSION,
+    }
 
 
 @app.get("/api/debug")
