@@ -46,6 +46,17 @@ jobs:
           test -n "$ANDROID_KEY_ALIAS" || { echo "Missing ANDROID_KEY_ALIAS"; exit 1; }
           test -n "$ANDROID_KEY_PASSWORD" || { echo "Missing ANDROID_KEY_PASSWORD"; exit 1; }
 
+      - name: Set Android version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            VERSION_NAME="${GITHUB_REF_NAME#v}"
+          else
+            VERSION_NAME="0.9.0"
+          fi
+          echo "ANDROID_VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+          echo "ANDROID_VERSION_CODE=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+
       - name: Restore signing keystore
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
