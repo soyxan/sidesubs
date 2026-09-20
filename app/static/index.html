@@ -101,6 +101,16 @@
       min-height: 38px; border: 0; border-radius: 10px; background: #fff; color: #000;
       font: inherit; font-weight: 700; padding: 0 14px;
     }
+    #aboutBlock {
+      margin-top: 22px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,.10);
+    }
+    #aboutTitle { margin: 0 0 9px; font-size: 14px; font-weight: 700; }
+    .aboutRow {
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+      min-height: 27px; font-size: 12px;
+    }
+    .aboutRow span:first-child { opacity: .58; }
+    .aboutVersion { font-variant-numeric: tabular-nums; opacity: .9; }
     .settingsActions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
     .settingsActions button {
       min-width: 78px; height: 38px; border: 0; border-radius: 10px; padding: 0 14px; font: inherit; cursor: pointer;
@@ -144,6 +154,17 @@
       <div id="appSettingsTitle">SideSubs for Android</div>
       <div id="appSettingsHint">Use the SideSubs Android app for native app settings and Cinema mode.</div>
       <button id="appSettingsButton" type="button">Get Android app →</button>
+    </div>
+    <div id="aboutBlock">
+      <div id="aboutTitle">About</div>
+      <div class="aboutRow">
+        <span>SideSubs Server</span>
+        <span id="serverVersion" class="aboutVersion">—</span>
+      </div>
+      <div id="androidVersionRow" class="aboutRow">
+        <span>Android app</span>
+        <span id="androidVersion" class="aboutVersion">—</span>
+      </div>
     </div>
     <div class="settingsActions">
       <button id="settingsCancel" type="button">Cancel</button>
@@ -357,6 +378,28 @@
     window.clearTimeout(controlsTimer);
   }
 
+  async function updateAboutVersions() {
+    el("serverVersion").textContent = "…";
+    const nativeApp = isNativeAndroid();
+    el("androidVersionRow").style.display = nativeApp ? "flex" : "none";
+
+    if (nativeApp && typeof window.SideSubsAndroid.getAppVersion === "function") {
+      try {
+        el("androidVersion").textContent = window.SideSubsAndroid.getAppVersion() || "Unknown";
+      } catch (_) {
+        el("androidVersion").textContent = "Unknown";
+      }
+    }
+
+    try {
+      const response = await fetch("/api/app-info", { cache: "no-store" });
+      const data = await response.json();
+      el("serverVersion").textContent = data.version || "Unknown";
+    } catch (_) {
+      el("serverVersion").textContent = "Unknown";
+    }
+  }
+
   function openSettings() {
     settingsLanguageDraft = preferredLanguage;
     updatePreferredLanguageButton();
@@ -367,6 +410,7 @@
       : "Use the SideSubs Android app for native app settings and Cinema mode.";
     el("appSettingsButton").textContent = nativeApp ? "App settings" : "Get Android app →";
     el("settingsBackdrop").classList.add("show");
+    updateAboutVersions();
     window.clearTimeout(controlsTimer);
   }
 
