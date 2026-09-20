@@ -9,13 +9,26 @@
     :root { color-scheme: dark; }
     * { box-sizing: border-box; }
     body { margin: 0; min-height: 100vh; background: #000; color: #fff; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; overflow: hidden; }
-    main { width: min(900px, 100%); min-height: 100vh; margin: 0 auto; padding: max(24px, env(safe-area-inset-top)) 22px max(24px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; justify-content: center; gap: 26px; }
+    #topStatusBar {
+      position: fixed; left: 50%; top: max(10px, env(safe-area-inset-top)); transform: translateX(-50%);
+      z-index: 20; width: min(900px, calc(100vw - 20px)); padding: 10px 14px;
+      border: 1px solid rgba(255,255,255,.12); border-radius: 16px; background: rgba(18,18,18,.74);
+      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      transition: opacity .25s ease, transform .25s ease;
+    }
+    #topStatusBar.hidden-status { opacity: 0; transform: translateX(-50%) translateY(-6px); pointer-events: none; }
     #title, #meta, #status, #current, #next { text-align: center; }
-    #title { font-size: 18px; font-weight: 700; }
-    #meta { font-size: 14px; opacity: .62; }
-    #current { font-size: clamp(34px, 8vw, 72px); line-height: 1.16; font-weight: 700; white-space: pre-line; text-wrap: balance; }
+    #title { font-size: 15px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #meta { margin-top: 3px; font-size: 12px; opacity: .62; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #status { margin-top: 3px; min-height: 14px; font-size: 11px; opacity: .48; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    main {
+      width: min(1000px, 100%); min-height: 100vh; margin: 0 auto;
+      padding: max(86px, calc(env(safe-area-inset-top) + 76px)) 22px max(72px, calc(env(safe-area-inset-bottom) + 58px));
+      display: flex; flex-direction: column; justify-content: center; gap: 26px;
+    }
+    #current { font-size: clamp(38px, 9vw, 78px); line-height: 1.14; font-weight: 700; white-space: pre-line; text-wrap: balance; }
     #next { font-size: clamp(20px, 5vw, 36px); line-height: 1.25; opacity: .40; white-space: pre-line; text-wrap: balance; }
-    #status { min-height: 18px; font-size: 13px; opacity: .42; }
     .error { font-size: 22px !important; color: #ffb1b1; }
 
     #controls {
@@ -26,6 +39,7 @@
       transition: opacity .25s ease, transform .25s ease; white-space: nowrap; max-width: calc(100vw - 16px);
     }
     #controls.hidden-controls { opacity: .08; transform: translateX(-50%) translateY(5px) scale(.96); }
+    body.cinema-mode #controls.hidden-controls { opacity: 0; pointer-events: none; }
     #controls button {
       border: 0; background: transparent; color: #fff; border-radius: 999px; min-width: 32px; height: 34px;
       padding: 0 8px; font: inherit; font-size: 13px; cursor: pointer;
@@ -39,6 +53,16 @@
     #sessionButton:disabled, #subtitleButton:disabled { opacity: .42; cursor: default; }
     #delayValue { min-width: 40px; text-align: center; font-size: 12px; opacity: .78; }
     .divider { width: 1px; height: 18px; background: rgba(255,255,255,.14); flex: 0 0 auto; }
+
+    @media (orientation: landscape) {
+      body.cinema-mode #topStatusBar { padding: 7px 12px; border-radius: 14px; }
+      body.cinema-mode #title { font-size: 14px; }
+      body.cinema-mode #meta { font-size: 11px; }
+      body.cinema-mode #status { font-size: 10px; }
+      body.cinema-mode main { padding-top: 24px; padding-bottom: 24px; gap: 18px; }
+      body.cinema-mode #current { font-size: clamp(36px, 6vw, 68px); }
+      body.cinema-mode #next { font-size: clamp(18px, 3.4vw, 30px); }
+    }
 
     #cinemaNotice {
       position: fixed; left: 50%; bottom: calc(max(10px, env(safe-area-inset-bottom)) + 50px); transform: translateX(-50%);
@@ -137,12 +161,15 @@
   </div>
 </div>
 
-<main>
+<div id="topStatusBar">
   <div id="title">Connecting to Plex…</div>
   <div id="meta"></div>
+  <div id="status"></div>
+</div>
+
+<main>
   <div id="current">—</div>
   <div id="next"></div>
-  <div id="status"></div>
 </main>
 
 <div id="controls">
@@ -279,10 +306,19 @@
     node._timer = window.setTimeout(() => node.classList.remove("show"), 2600);
   }
 
+  function updateStatusBarVisibility(show) {
+    const shouldHide = cinemaEnabled && !show;
+    el("topStatusBar").classList.toggle("hidden-status", shouldHide);
+  }
+
   function showControls() {
     window.clearTimeout(controlsTimer);
     el("controls").classList.remove("hidden-controls");
-    controlsTimer = window.setTimeout(() => el("controls").classList.add("hidden-controls"), 2800);
+    updateStatusBarVisibility(true);
+    controlsTimer = window.setTimeout(() => {
+      el("controls").classList.add("hidden-controls");
+      updateStatusBarVisibility(false);
+    }, 2800);
   }
 
   function languageDisplayName(code) {
@@ -524,6 +560,8 @@
 
   async function exitCinemaMode() {
     cinemaEnabled = false;
+    document.body.classList.remove("cinema-mode");
+    updateStatusBarVisibility(true);
 
     if (isNativeAndroid()) {
       window.SideSubsAndroid.exitCinemaMode();
@@ -546,6 +584,7 @@
 
   async function enterCinemaMode() {
     cinemaEnabled = true;
+    document.body.classList.add("cinema-mode");
 
     if (isNativeAndroid()) {
       window.SideSubsAndroid.enterCinemaMode();
