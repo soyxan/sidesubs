@@ -11,7 +11,8 @@
     body { margin: 0; min-height: 100vh; background: #000; color: #fff; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; overflow: hidden; }
     #topStatusBar {
       position: fixed; left: 50%; top: max(10px, env(safe-area-inset-top)); transform: translateX(-50%);
-      z-index: 20; width: min(900px, calc(100vw - 20px)); padding: 10px 14px;
+      z-index: 20; width: max-content; min-width: min(320px, calc(100vw - 20px)); max-width: calc(100vw - 20px);
+      padding: 10px 14px;
       border: 1px solid rgba(255,255,255,.12); border-radius: 16px; background: rgba(18,18,18,.74);
       backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
       transition: opacity .25s ease, transform .25s ease;
@@ -38,8 +39,8 @@
       backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
       transition: opacity .25s ease, transform .25s ease; white-space: nowrap; max-width: calc(100vw - 16px);
     }
-    #controls.hidden-controls { opacity: .08; transform: translateX(-50%) translateY(5px) scale(.96); }
-    body.cinema-mode #controls.hidden-controls { opacity: 0; pointer-events: none; }
+    #controls.hidden-controls { opacity: 1; transform: translateX(-50%); }
+    body.cinema-mode #controls.hidden-controls { opacity: 0; transform: translateX(-50%) translateY(5px) scale(.96); pointer-events: none; }
     #controls button {
       border: 0; background: transparent; color: #fff; border-radius: 999px; min-width: 32px; height: 34px;
       padding: 0 8px; font: inherit; font-size: 13px; cursor: pointer;
@@ -315,6 +316,9 @@
     window.clearTimeout(controlsTimer);
     el("controls").classList.remove("hidden-controls");
     updateStatusBarVisibility(true);
+
+    if (!cinemaEnabled) return;
+
     controlsTimer = window.setTimeout(() => {
       el("controls").classList.add("hidden-controls");
       updateStatusBarVisibility(false);
@@ -561,6 +565,8 @@
   async function exitCinemaMode() {
     cinemaEnabled = false;
     document.body.classList.remove("cinema-mode");
+    window.clearTimeout(controlsTimer);
+    el("controls").classList.remove("hidden-controls");
     updateStatusBarVisibility(true);
 
     if (isNativeAndroid()) {
