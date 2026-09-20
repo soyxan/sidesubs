@@ -182,6 +182,16 @@ Development changes under `android/` also trigger a separate debug APK build in 
 
 No Android IDE is required to build the project in CI.
 
+## Versioning
+
+SideSubs uses the Git tag as the source of truth for official releases.
+
+- Pushes to `main` publish Docker `latest` plus a commit-specific `sha-...` tag.
+- Tags such as `v0.9.1` publish a Docker image tagged `0.9.1`.
+- Android release builds created from a version tag use the same semantic version as `versionName`.
+- The web Settings screen shows the running SideSubs Server version. Inside the Android app it also shows the native Android app version.
+- Development Docker builds identify themselves by their commit-based `sha-...` version rather than pretending to be an official release.
+
 ## Plex token
 
 SideSubs authenticates to your Plex server using a Plex token.
