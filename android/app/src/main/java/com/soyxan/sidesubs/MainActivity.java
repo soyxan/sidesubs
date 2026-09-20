@@ -275,6 +275,11 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public String getAppVersion() {
+            return BuildConfig.VERSION_NAME;
+        }
+
+        @JavascriptInterface
         public void enterCinemaMode() {
             runOnUiThread(() -> setCinemaMode(true));
         }
