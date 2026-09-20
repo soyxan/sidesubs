@@ -66,6 +66,8 @@ APP_ID = "SideSubs"
 API_VERSION = 1
 APP_VERSION = os.getenv("SIDESUBS_VERSION", "dev").strip() or "dev"
 
+logger.info("Starting %s version=%s api_version=%s", APP_ID, APP_VERSION, API_VERSION)
+
 TEXT_SUBTITLE_CODECS = {"subrip", "srt", "ass", "ssa", "webvtt", "mov_text"}
 LANGUAGE_ALIASES = {
     "english": "en", "eng": "en",
