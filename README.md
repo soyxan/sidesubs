@@ -15,13 +15,32 @@ SideSubs is designed primarily for trusted home-LAN use.
 - Adjustable subtitle delay stored per browser/device.
 - Preferred subtitle language stored per browser/device.
 - Per-title manual subtitle track selection.
-- Unified discovery of external SRT files and embedded subtitle streams.
-- Embedded text subtitle extraction through FFmpeg/FFprobe.
+- Subtitle discovery from Plex metadata, including external and embedded text tracks.
+- Embedded text subtitle extraction through the Plex Media Server transcode API.
+- No media filesystem mount required by SideSubs.
 - Custom mobile-friendly selectors for sessions, tracks and language.
 - Cinema mode optimized for subtitle viewing.
 - Native Android companion app.
 - Docker deployment with no database, webhooks or reverse proxy required.
-- Media mounted read-only.
+
+## Architecture
+
+The Docker/web application is split into provider-neutral SideSubs logic and media-server adapters.
+
+```text
+SideSubs UI / API
+       |
+       v
+provider interface
+       |
+       +-- PlexProvider       (implemented)
+       +-- EmbyProvider       (future)
+       +-- JellyfinProvider   (future)
+```
+
+The provider boundary exposes playback sessions, subtitle tracks and nearby timed-text cues. Synchronization, language selection, delay, cue rendering and the HTTP API are independent of Plex-specific objects.
+
+Only Plex is implemented today. `MEDIA_PROVIDER=plex` is therefore the only supported provider value, but the separation is intentional so a future Emby or Jellyfin adapter does not require rewriting the SideSubs UI or subtitle-selection logic.
 
 ## Docker image
 
@@ -52,9 +71,9 @@ PLEX_TOKEN
 ### Common configuration
 
 ```text
-MEDIA_PATH=/mnt/data/media
-PLEX_MEDIA_ROOT=/data/media
+MEDIA_PROVIDER=plex
 PLEX_URL=http://host.docker.internal:32400
+PLEX_CLIENT_FILTER=
 PORT=8085
 POLL_INTERVAL_MS=750
 ```
@@ -72,18 +91,16 @@ services:
       - "8085:8000"
 
     environment:
+      MEDIA_PROVIDER: "plex"
       PLEX_URL: "http://host.docker.internal:32400"
       PLEX_TOKEN: "${PLEX_TOKEN}"
-      PLEX_MEDIA_ROOT: "/data/media"
-      CONTAINER_MEDIA_ROOT: "/data/media"
       POLL_INTERVAL_MS: "750"
 
     extra_hosts:
       - "host.docker.internal:host-gateway"
-
-    volumes:
-      - /mnt/data/media:/data/media:ro
 ```
+
+There is no media volume. SideSubs obtains track metadata and subtitle text from Plex over HTTP.
 
 Never commit your Plex token to GitHub.
 
@@ -95,16 +112,16 @@ http://YOUR-SERVER-IP:8085
 
 ## How it works
 
-1. SideSubs asks Plex for the currently available playback sessions.
-2. You choose the Plex player that SideSubs should follow.
+1. SideSubs asks the configured provider for currently available playback sessions.
+2. You choose the player that SideSubs should follow.
 3. The selected player is remembered locally on that browser/device.
 4. Plex provides playback position and media metadata.
-5. SideSubs maps the Plex media path to the read-only media volume.
-6. External and embedded subtitle tracks are discovered.
-7. SideSubs chooses a compatible track using the preferred language unless a specific track has been selected for that title.
-8. The backend smooths Plex playback-position updates.
-9. The client polls SideSubs and renders the synchronized current and next subtitle.
-10. An optional client-side delay can shift subtitle presentation without changing Plex playback.
+5. SideSubs discovers subtitle streams from Plex metadata rather than inspecting the media file itself.
+6. SideSubs chooses a compatible track using the preferred language unless a specific track has been selected for that title.
+7. External text subtitles are fetched directly from Plex when a stream key is available.
+8. Embedded text subtitles are requested through Plex's universal transcode subtitle endpoint. SideSubs asks only for small cached windows around the current playback position instead of transcoding the whole title on every poll.
+9. The backend smooths Plex playback-position updates.
+10. The client renders the synchronized current and next subtitle. An optional client-side delay can shift subtitle presentation without changing playback.
 
 If the selected Plex session disappears, SideSubs does **not** silently switch to another player. The UI indicates that the selected session is no longer available.
 
@@ -118,25 +135,15 @@ The subtitle selector in the main control bar shows the tracks available for the
 
 ### External subtitles
 
-Matching external SRT files are discovered automatically. Language is inferred from the filename suffix when possible.
-
-Example:
-
-```text
-Movie.mkv
-Movie.en.srt
-Movie.es.srt
-Movie.fr.forced.srt
-Movie.commentary.srt
-```
+External subtitle tracks exposed by Plex are fetched through Plex itself. SideSubs no longer depends on matching filenames or a local media directory.
 
 ### Embedded subtitles
 
-SideSubs inspects embedded subtitle streams with FFprobe. Language is read from stream metadata when available and can also be inferred from common language names in the stream title.
+Embedded text subtitle streams are identified from Plex metadata. SideSubs asks PMS to expose the selected embedded stream as timed text near the current playback position and parses the returned ASS/SRT/WebVTT-compatible payload.
 
-Supported text subtitle codecs include SRT/SubRip, ASS/SSA, WebVTT and mov_text.
+Supported text codecs include SRT/SubRip, ASS/SSA, WebVTT and mov_text. Image-based subtitle formats such as PGS may appear in the selector as unsupported, but SideSubs does not currently render them as text.
 
-Image-based subtitle formats such as PGS may appear in the selector as unsupported, but SideSubs does not currently render them as text.
+Plex versions differ in whether `subtitleStreamID` is honored directly in a universal-transcode request. The Plex adapter first attempts per-request selection. If PMS does not honor it, SideSubs temporarily selects the stream on the Plex Part for the short extraction transaction and immediately restores the previous selection.
 
 ## Interface
 
@@ -150,19 +157,7 @@ In **Cinema mode**, the interface is optimized for landscape viewing. The status
 
 SideSubs includes a small native Android client in the `android/` directory.
 
-The app wraps the SideSubs web interface in a WebView while adding native behavior that is useful for a second-screen subtitle display:
-
-- first-run server configuration;
-- persistent SideSubs server URL;
-- native connection and startup error screens;
-- validation that the SideSubs web interface becomes ready;
-- support for trusted LAN HTTP servers;
-- portrait orientation during normal use;
-- Cinema mode switches to landscape;
-- Cinema mode enters immersive fullscreen;
-- the screen is kept awake while Cinema mode is active;
-- leaving Cinema mode restores portrait orientation and normal screen timeout;
-- native app settings are accessible from the SideSubs web Settings screen.
+The Android application is unchanged by this backend refactor. It still connects to the Docker/web SideSubs server. A standalone native Android implementation that talks directly to a media server is intentionally deferred; the provider-neutral backend architecture is preparation for that future work, not part of this change.
 
 On first launch, enter the address of your SideSubs server, for example:
 
@@ -180,8 +175,6 @@ Version tags such as `v0.9.0` trigger the signed release workflow. The generated
 
 Development changes under `android/` also trigger a separate debug APK build in GitHub Actions. Debug artifacts are intended for development and testing; GitHub Releases are the recommended source for installable public builds.
 
-No Android IDE is required to build the project in CI.
-
 ## Versioning
 
 SideSubs uses the Git tag as the source of truth for official releases.
@@ -194,7 +187,7 @@ SideSubs uses the Git tag as the source of truth for official releases.
 
 ## Plex token
 
-SideSubs authenticates to your Plex server using a Plex token.
+SideSubs authenticates to your Plex server using a Plex token. The token remains in the Docker container and is not sent to the SideSubs browser UI.
 
 Plex documentation:
 
@@ -218,7 +211,7 @@ SideSubs is intended for a trusted home LAN.
 
 - The Plex token remains server-side.
 - The browser and Android client do not receive the Plex token.
-- Media is mounted read-only.
+- SideSubs no longer requires filesystem access to the media library.
 - The web UI currently has no authentication layer.
 - Local HTTP is supported for home-LAN deployments.
 - Do not expose SideSubs directly to the public Internet without adding an appropriate security layer.
@@ -231,7 +224,8 @@ Backend:
 - FastAPI
 - Uvicorn
 - python-plexapi
-- FFmpeg / FFprobe
+- requests
+- provider adapter boundary under `app/providers/`
 
 Android:
 
