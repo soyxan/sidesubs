@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import math
 import threading
 import time
 import uuid
@@ -190,7 +189,7 @@ class PlexProvider(MediaProvider):
             "session": transcode_session,
             "subtitles": "auto",
             "subtitleStreamID": stream_id,
-            "offset": max(0, int(offset)),
+            "offset": round(max(0.0, float(offset)), 3),
             "copyts": 1,
             "Accept-Language": "en",
             "X-Plex-Token": self.token,
@@ -352,8 +351,8 @@ class PlexProvider(MediaProvider):
                     on_payload(first_payload)
                     if first_cues:
                         params["offset"] = max(
-                            int(params["offset"]),
-                            math.ceil(first_cues[-1].end) + 1,
+                            float(params["offset"]),
+                            round(first_cues[-1].end + 0.05, 3),
                         )
                     logger.debug(
                         "Plex subtitle segment session=%s request=1 bytes=%s cues=%s next_offset=%s",
@@ -416,8 +415,8 @@ class PlexProvider(MediaProvider):
                                 repeated_cue_count = 0
 
                             params["offset"] = max(
-                                int(params["offset"]),
-                                math.ceil(last_cue.end) + 1,
+                                float(params["offset"]),
+                                round(last_cue.end + 0.05, 3),
                             )
                         logger.debug(
                             "Plex subtitle segment session=%s request=%s bytes=%s cues=%s next_offset=%s repeats=%s",
