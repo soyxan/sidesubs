@@ -66,12 +66,18 @@ def _smooth_position(session: PlaybackSession) -> None:
             # if it jumps back to the old timeline, treat the first sample as
             # transient jitter.
             if pending_raw is not None and pending_time is not None:
-                pending_elapsed = max(0.0, now - float(pending_time))
-                expected_pending = float(pending_raw) + pending_elapsed
-                if abs(raw_position - expected_pending) <= 1.5:
+                # A stale PMS viewOffset is often repeated unchanged for a
+                # number of polls. That must not confirm a seek. A genuine
+                # backward seek is accepted only once the lower timeline itself
+                # starts advancing.
+                lower_timeline_progress = raw_position - float(pending_raw)
+                still_below_smoothed_clock = predicted - raw_position > SEEK_THRESHOLD_SECONDS
+                if lower_timeline_progress >= 0.5 and still_below_smoothed_clock:
                     position = raw_position
                     confirmed_backward_seek = True
-                else:
+                    pending_raw = None
+                    pending_time = None
+                elif raw_position >= predicted - SEEK_THRESHOLD_SECONDS:
                     pending_raw = None
                     pending_time = None
 
