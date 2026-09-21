@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 import uuid
@@ -342,12 +343,19 @@ class PlexProvider(MediaProvider):
                 first_response.raise_for_status()
                 first_payload = self._read_subtitle_segment(first_response, stop_event)
                 if first_payload:
+                    first_cues = parse_timed_text(first_payload.decode("utf-8", errors="replace"))
                     on_payload(first_payload)
-                    logger.debug(
-                        "Plex subtitle segment session=%s request=1 bytes=%s cues=%s",
+                    if first_cues:
+                        params["offset"] = max(
+                            int(params["offset"]),
+                            math.ceil(first_cues[-1].end + 0.10),
+                        )
+                    logger.info(
+                        "Plex subtitle segment session=%s request=1 bytes=%s cues=%s next_offset=%s",
                         transcode_session,
                         len(first_payload),
-                        len(parse_timed_text(first_payload.decode("utf-8", errors="replace"))),
+                        len(first_cues),
+                        params["offset"],
                     )
             finally:
                 if first_response is not None:
@@ -384,14 +392,21 @@ class PlexProvider(MediaProvider):
 
                     payload = self._read_subtitle_segment(response, stop_event)
                     if payload:
+                        segment_cues = parse_timed_text(payload.decode("utf-8", errors="replace"))
                         on_payload(payload)
                         received = True
-                        logger.debug(
-                            "Plex subtitle segment session=%s request=%s bytes=%s cues=%s",
+                        if segment_cues:
+                            params["offset"] = max(
+                                int(params["offset"]),
+                                math.ceil(segment_cues[-1].end + 0.10),
+                            )
+                        logger.info(
+                            "Plex subtitle segment session=%s request=%s bytes=%s cues=%s next_offset=%s",
                             transcode_session,
                             request_count,
                             len(payload),
-                            len(parse_timed_text(payload.decode("utf-8", errors="replace"))),
+                            len(segment_cues),
+                            params["offset"],
                         )
 
                 except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError):
