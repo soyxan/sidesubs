@@ -28,8 +28,9 @@ class PlexProvider(MediaProvider):
         self._server: PlexServer | None = None
         self._lock = threading.RLock()
         self._window_cache: OrderedDict[tuple[str, str, int], tuple[float, tuple[Cue, ...]]] = OrderedDict()
-        self._cache_ttl = 30.0
-        self._cache_limit = 192
+        self._cache_ttl = 20.0
+        self._cache_limit = 256
+        self._prefetching: set[tuple[str, str, int]] = set()
 
     def _plex(self) -> PlexServer:
         if self._server is None:
@@ -287,22 +288,67 @@ class PlexProvider(MediaProvider):
                 except Exception:
                     logger.exception("Unable to restore Plex subtitle stream %s", old_stream_id)
 
-    def _cached_window(self, session: PlaybackSession, track: SubtitleTrack, offset: int) -> tuple[Cue, ...]:
-        key = (session.rating_key, track.id, offset)
+    def _cache_key(self, session: PlaybackSession, track: SubtitleTrack, offset: int) -> tuple[str, str, int]:
+        return (session.rating_key, track.id, offset)
+
+    def _get_cached_window(self, session: PlaybackSession, track: SubtitleTrack, offset: int) -> tuple[Cue, ...] | None:
+        key = self._cache_key(session, track, offset)
         now = time.monotonic()
         with self._lock:
             cached = self._window_cache.get(key)
             if cached and now - cached[0] <= self._cache_ttl:
                 self._window_cache.move_to_end(key)
                 return cached[1]
+        return None
 
-        cues = self._fetch_embedded_at_offset(session, track, offset)
+    def _store_window(self, session: PlaybackSession, track: SubtitleTrack, offset: int, cues: tuple[Cue, ...]) -> None:
+        key = self._cache_key(session, track, offset)
+        now = time.monotonic()
         with self._lock:
             self._window_cache[key] = (now, cues)
             self._window_cache.move_to_end(key)
             while len(self._window_cache) > self._cache_limit:
                 self._window_cache.popitem(last=False)
+
+    def _cached_window(self, session: PlaybackSession, track: SubtitleTrack, offset: int) -> tuple[Cue, ...]:
+        cached = self._get_cached_window(session, track, offset)
+        if cached is not None:
+            return cached
+        cues = self._fetch_embedded_at_offset(session, track, offset)
+        self._store_window(session, track, offset, cues)
         return cues
+
+    def _prefetch_window(self, session: PlaybackSession, track: SubtitleTrack, offset: int) -> None:
+        if self._get_cached_window(session, track, offset) is not None:
+            return
+
+        key = self._cache_key(session, track, offset)
+        with self._lock:
+            if key in self._prefetching:
+                return
+            self._prefetching.add(key)
+
+        def worker() -> None:
+            try:
+                cues = self._fetch_embedded_at_offset(session, track, offset)
+                self._store_window(session, track, offset, cues)
+            except Exception:
+                logger.debug(
+                    "Plex subtitle prefetch failed rating_key=%s track=%s offset=%s",
+                    session.rating_key,
+                    track.id,
+                    offset,
+                    exc_info=True,
+                )
+            finally:
+                with self._lock:
+                    self._prefetching.discard(key)
+
+        threading.Thread(
+            target=worker,
+            name=f"sidesubs-subtitle-prefetch-{session.rating_key}-{offset}",
+            daemon=True,
+        ).start()
 
     def load_subtitle_window(
         self,
@@ -315,18 +361,38 @@ class PlexProvider(MediaProvider):
         if track.source == "external" and track.provider_data.get("key"):
             return self._fetch_external(track)
 
-        # Fetch small nearby windows. PMS keeps the universal subtitle
-        # response chunked; only the first generated chunk is required here.
-        # Bucketing prevents SideSubs' polling loop from creating transcode
-        # sessions on every status request.
-        bucket = max(0, int(position // 5) * 5)
-        current_offset = max(0, bucket - 2)
-        next_offset = bucket + 4
+        # Keep the synchronous window close to the actual playback position.
+        # The previous 5-second buckets were too coarse and could make SideSubs
+        # visibly trail playback. Two-second buckets keep PMS work bounded while
+        # reducing timing error, and the next window is prefetched asynchronously
+        # so normal polling stays on cached data.
+        bucket = max(0, int(position // 2) * 2)
+        current_offset = max(0, bucket - 1)
+        next_offset = bucket + 2
+
         first = self._cached_window(session, track, current_offset)
-        if any(cue.start > position for cue in first):
-            return first
-        second = self._cached_window(session, track, next_offset)
-        return merge_cues(first, second)
+        second = self._get_cached_window(session, track, next_offset)
+
+        # Always warm the upcoming window without blocking /api/status.
+        if second is None:
+            self._prefetch_window(session, track, next_offset)
+            second = ()
+
+        combined = merge_cues(first, second)
+
+        # If the current PMS chunk contains neither the active cue nor a future
+        # cue, make one precise fetch at the current second. This avoids waiting
+        # for the next bucket during sparse dialogue.
+        has_relevant_cue = any(
+            cue.end >= position - 1.5 and cue.start <= position + 4.0
+            for cue in combined
+        )
+        if not has_relevant_cue:
+            precise_offset = max(0, int(position))
+            precise = self._cached_window(session, track, precise_offset)
+            combined = merge_cues(combined, precise)
+
+        return combined
 
     def diagnostics(self) -> dict:
         plex = self._plex()
