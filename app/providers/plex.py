@@ -36,11 +36,15 @@ class PlexProvider(MediaProvider):
         self._player_idle_ttl = 90.0
 
     def _plex(self) -> PlexServer:
-        if self._server is None:
-            logger.info("Connecting to Plex at %s", self.base_url)
-            self._server = PlexServer(self.base_url, self.token, timeout=5)
-            logger.info("Connected to Plex server: %s", getattr(self._server, "friendlyName", "unknown"))
-        return self._server
+        # Multiple API requests can arrive concurrently while SideSubs is
+        # starting. Serialize PlexServer creation so only one connection
+        # attempt is in flight and the others reuse the same instance.
+        with self._lock:
+            if self._server is None:
+                logger.info("Connecting to Plex at %s", self.base_url)
+                self._server = PlexServer(self.base_url, self.token, timeout=5)
+                logger.info("Connected to Plex server: %s", getattr(self._server, "friendlyName", "unknown"))
+            return self._server
 
     @staticmethod
     def _player_id(native) -> str:
@@ -257,6 +261,18 @@ class PlexProvider(MediaProvider):
             len(response.content),
         )
 
+    def _stop_transcode(self, transcode_session: str) -> None:
+        try:
+            response = requests.get(
+                f"{self.base_url}/video/:/transcode/universal/stop",
+                params={"session": transcode_session, "X-Plex-Token": self.token},
+                timeout=3,
+            )
+            response.raise_for_status()
+            logger.info("Stopped Plex transcode session=%s", transcode_session)
+        except Exception as exc:
+            logger.warning("Unable to stop Plex transcode session=%s: %s", transcode_session, exc)
+
     def _read_subtitle_segment(
         self,
         response: requests.Response,
@@ -453,6 +469,7 @@ class PlexProvider(MediaProvider):
                     stop_event.wait(0.10)
 
         finally:
+            self._stop_transcode(transcode_session)
             logger.info(
                 "Closed Plex subtitle polling session rating_key=%s stream=%s requests=%s",
                 rating_key,
