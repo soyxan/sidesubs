@@ -378,7 +378,6 @@
     button.disabled = tracks.length === 0;
     button.textContent = activeTrack ? `💬 ${subtitleLabel(activeTrack)}` : "💬 Auto";
 
-    if (previousRatingKey !== currentRatingKey) delayedQueue = [];
   }
 
   function notice(message) {
