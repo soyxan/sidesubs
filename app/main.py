@@ -198,7 +198,7 @@ def debug():
 
 
 @app.get("/api/status")
-def status(preferred_language: str = "", subtitle_id: str = ""):
+def status(preferred_language: str = "", subtitle_id: str = "", delay_ms: int = 0):
     try:
         media_provider = provider()
         session = select_session(media_provider.list_sessions())
@@ -217,7 +217,9 @@ def status(preferred_language: str = "", subtitle_id: str = ""):
             if selected_track:
                 cues = media_provider.subtitle_cues(session, selected_track, session.position)
                 if cues:
-                    current, next_cue = cue_pair(cues, session.position)
+                    safe_delay_ms = max(0, min(int(delay_ms), 5000))
+                    effective_position = max(0.0, session.position - safe_delay_ms / 1000.0)
+                    current, next_cue = cue_pair(cues, effective_position)
         except Exception as exc:
             subtitle_error = "Subtitle stream temporarily unavailable"
             logger.warning("Subtitle loading failed: %s", exc)
@@ -239,6 +241,7 @@ def status(preferred_language: str = "", subtitle_id: str = ""):
             "state": session.state,
             "client": session.client or session.product or session.device or media_provider.name,
             "position": session.position,
+            "subtitle_position": max(0.0, session.position - max(0, min(int(delay_ms), 5000)) / 1000.0),
             "rating_key": session.rating_key or None,
             "media_found": True,
             "subtitle_tracks": [track.as_dict() for track in tracks],
