@@ -7,6 +7,7 @@ import time
 from fastapi import Request
 
 from app import main
+from app.domain import PlaybackSession
 
 
 _original_select_session = main.select_session
@@ -21,28 +22,13 @@ RAW_CHANGE_EPSILON_SECONDS = 0.20
 SEEK_THRESHOLD_SECONDS = 2.5
 
 
-def _player_id(session) -> str:
-    player = getattr(session, "player", None)
-    machine_id = getattr(player, "machineIdentifier", None)
-    if machine_id:
-        return str(machine_id)
-
-    title = getattr(player, "title", None) or ""
-    product = getattr(player, "product", None) or ""
-    device = getattr(player, "device", None) or ""
-    return f"fallback:{title}|{product}|{device}"
+def _session_key(session: PlaybackSession) -> str:
+    return session.id
 
 
-def _session_key(session) -> str:
-    rating_key = getattr(session, "ratingKey", None) or "unknown-media"
-    session_key = getattr(session, "sessionKey", None) or ""
-    return f"{_player_id(session)}:{rating_key}:{session_key}"
-
-
-def _smooth_position(session) -> None:
-    player = getattr(session, "player", None)
-    state = (getattr(player, "state", "") or "unknown").casefold()
-    raw_position = int(getattr(session, "viewOffset", 0) or 0) / 1000.0
+def _smooth_position(session: PlaybackSession) -> None:
+    state = (session.state or "unknown").casefold()
+    raw_position = float(session.position)
     now = time.monotonic()
     key = _session_key(session)
 
@@ -57,7 +43,7 @@ def _smooth_position(session) -> None:
                 "time": now,
                 "state": state,
             }
-            session.viewOffset = int(position * 1000)
+            session.position = position
             return
 
         if previous is None or previous.get("state") != "playing":
@@ -84,21 +70,18 @@ def _smooth_position(session) -> None:
             "state": state,
         }
 
-    session.viewOffset = int(position * 1000)
+    session.position = position
 
 
 def select_session_with_smooth_clock(sessions):
     items = list(sessions)
     requested_player_id = _selected_player_id.get()
 
-    # For normal app status calls selection is explicit. An empty string means
-    # the browser has not selected a player, so do not fall back to any session.
     if requested_player_id is not None:
         if not requested_player_id:
             return None
-        session = next((item for item in items if _player_id(item) == requested_player_id), None)
+        session = next((item for item in items if item.player_id == requested_player_id), None)
     else:
-        # Keep diagnostics useful when called directly.
         session = _original_select_session(items)
 
     if session is not None:
@@ -111,11 +94,11 @@ main.select_session = select_session_with_smooth_clock
 
 @main.app.get("/api/sessions")
 def sessions():
-    items = list(main.plex_server().sessions())
+    items = main.provider().list_sessions()
     result = []
     for session in items:
         data = main.serialize_session(session)
-        data["player_id"] = _player_id(session)
+        data["player_id"] = session.player_id
         result.append(data)
     return {"ok": True, "sessions": result}
 
