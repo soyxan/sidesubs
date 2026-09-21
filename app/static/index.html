@@ -238,6 +238,16 @@
   let currentAutoSubtitleId = "";
   let delayedQueue = [];
   let settingsLanguageDraft = preferredLanguage;
+  let subtitleSize = localStorage.getItem("subtitleSize") || "medium";
+  let settingsSubtitleSizeDraft = subtitleSize;
+
+  const subtitleSizes = [
+    { id: "very-small", label: "Very small", previewPx: 18, current: "clamp(28px, 6.5vw, 56px)", next: "clamp(16px, 3.6vw, 26px)", cinemaCurrent: "clamp(26px, 4.4vw, 50px)", cinemaNext: "clamp(14px, 2.6vw, 23px)" },
+    { id: "small", label: "Small", previewPx: 22, current: "clamp(33px, 7.7vw, 67px)", next: "clamp(18px, 4.3vw, 31px)", cinemaCurrent: "clamp(31px, 5.2vw, 59px)", cinemaNext: "clamp(16px, 3vw, 26px)" },
+    { id: "medium", label: "Medium", previewPx: 26, current: "clamp(38px, 9vw, 78px)", next: "clamp(20px, 5vw, 36px)", cinemaCurrent: "clamp(36px, 6vw, 68px)", cinemaNext: "clamp(18px, 3.4vw, 30px)" },
+    { id: "large", label: "Large", previewPx: 31, current: "clamp(44px, 10.5vw, 90px)", next: "clamp(23px, 5.8vw, 42px)", cinemaCurrent: "clamp(42px, 7vw, 79px)", cinemaNext: "clamp(21px, 4vw, 35px)" },
+    { id: "very-large", label: "Very large", previewPx: 36, current: "clamp(50px, 12vw, 104px)", next: "clamp(26px, 6.7vw, 48px)", cinemaCurrent: "clamp(48px, 8vw, 91px)", cinemaNext: "clamp(24px, 4.6vw, 40px)" },
+  ];
 
   const subtitleLanguages = [
     ["", "Automatic"],
@@ -361,6 +371,41 @@
     }, 2800);
   }
 
+  function subtitleSizeOption(id) {
+    return subtitleSizes.find(option => option.id === id) || subtitleSizes.find(option => option.id === "medium");
+  }
+
+  function applySubtitleSize(id) {
+    const option = subtitleSizeOption(id);
+    document.documentElement.style.setProperty("--subtitle-current-size", option.current);
+    document.documentElement.style.setProperty("--subtitle-next-size", option.next);
+    document.documentElement.style.setProperty("--cinema-current-size", option.cinemaCurrent);
+    document.documentElement.style.setProperty("--cinema-next-size", option.cinemaNext);
+  }
+
+  function updateSubtitleSizeButton() {
+    el("subtitleSizeLabel").textContent = subtitleSizeOption(settingsSubtitleSizeDraft).label;
+  }
+
+  function openSubtitleSizeModal() {
+    const list = el("choiceList");
+    list.replaceChildren();
+    el("choiceTitle").textContent = "Subtitle size";
+    for (const option of subtitleSizes) {
+      const button = choiceItem(option.label, "", option.id === settingsSubtitleSizeDraft, false, () => {
+        settingsSubtitleSizeDraft = option.id;
+        updateSubtitleSizeButton();
+        applySubtitleSize(settingsSubtitleSizeDraft);
+      });
+      const primary = button.querySelector(".choicePrimary");
+      primary.classList.add("subtitleSizePreview");
+      primary.style.fontSize = option.previewPx + "px";
+      list.appendChild(button);
+    }
+    el("choiceBackdrop").classList.add("show");
+    window.clearTimeout(controlsTimer);
+  }
+
   function languageDisplayName(code) {
     const match = subtitleLanguages.find(([value]) => value === code);
     if (!match) return code ? code.toUpperCase() : "Automatic";
@@ -417,7 +462,9 @@
 
   function openSettings() {
     settingsLanguageDraft = preferredLanguage;
+    settingsSubtitleSizeDraft = subtitleSize;
     updatePreferredLanguageButton();
+    updateSubtitleSizeButton();
     const nativeApp = isNativeAndroid();
     el("appSettingsTitle").textContent = nativeApp ? "Android app" : "SideSubs for Android";
     el("appSettingsHint").textContent = nativeApp
@@ -430,6 +477,8 @@
   }
 
   function closeSettings() {
+    settingsSubtitleSizeDraft = subtitleSize;
+    applySubtitleSize(subtitleSize);
     el("settingsBackdrop").classList.remove("show");
     showControls();
   }
@@ -677,6 +726,10 @@
     event.stopPropagation();
     openLanguageModal();
   });
+  el("subtitleSizeButton").addEventListener("click", event => {
+    event.stopPropagation();
+    openSubtitleSizeModal();
+  });
   el("appSettingsButton").addEventListener("click", () => {
     closeSettings();
     if (isNativeAndroid()) {
@@ -687,10 +740,13 @@
   });
   el("settingsSave").addEventListener("click", () => {
     preferredLanguage = settingsLanguageDraft;
+    subtitleSize = settingsSubtitleSizeDraft;
     localStorage.setItem("preferredSubtitleLanguage", preferredLanguage);
+    localStorage.setItem("subtitleSize", subtitleSize);
+    applySubtitleSize(subtitleSize);
     delayedQueue = [];
     closeSettings();
-    notice(preferredLanguage ? `Preferred language: ${preferredLanguage.toUpperCase()}` : "Automatic language preference disabled");
+    notice("Subtitle size: " + subtitleSizeOption(subtitleSize).label);
   });
   el("settingsBackdrop").addEventListener("pointerdown", event => {
     if (event.target === el("settingsBackdrop")) closeSettings();
@@ -823,6 +879,7 @@
     }
   }
 
+  applySubtitleSize(subtitleSize);
   updateDelayLabel();
   showControls();
   updateSessionButton();
