@@ -70,7 +70,25 @@ class SubtitlePlayer:
             logger.info("Subtitle player seek detected: position=%.3f", position)
             self.restart(position)
         elif needs_start:
-            self.start(position)
+            # A transport session may end/recycle while the persistent player
+            # already has cues buffered ahead of playback. Resume beyond the
+            # last known cue instead of reopening from the current playback
+            # position, otherwise PMS can keep returning the same cue until
+            # playback catches up and SideSubs shows temporary gaps.
+            with self._lock:
+                resume_position = position
+                if self._cues:
+                    resume_position = max(
+                        position,
+                        self._cues[-1].end + self.START_PREROLL_SECONDS + 0.50,
+                    )
+            logger.info(
+                "Subtitle transport resume playback=%.3f resume=%.3f buffered_last_end=%s",
+                position,
+                resume_position,
+                f"{self._cues[-1].end:.3f}" if self._cues else "<none>",
+            )
+            self.start(resume_position)
 
         return self.cues()
 
