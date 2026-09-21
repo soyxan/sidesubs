@@ -38,7 +38,7 @@ class SubtitlePlayer:
         self._error: str | None = None
         self._started_at = 0.0
         self._timeline_offset = 0.0
-        self._timeline_mode_logged = False
+        self._timeline_mode: str | None = None
         self._last_used_at = time.monotonic()
 
     @property
@@ -106,7 +106,7 @@ class SubtitlePlayer:
             self._cues = ()
             self._error = None
             self._timeline_offset = 0.0
-            self._timeline_mode_logged = False
+            self._timeline_mode = None
             self._start_locked(position, preroll=True)
 
     def _start_locked(self, position: float, *, preroll: bool = True) -> None:
@@ -115,6 +115,8 @@ class SubtitlePlayer:
         self._stop_event = threading.Event()
         offset = self.START_PREROLL_SECONDS if preroll else 0.0
         self._started_at = max(0.0, position - offset)
+        if self._timeline_mode == "relative":
+            self._timeline_offset = self._started_at
         thread = threading.Thread(
             target=self._run,
             args=(generation, self._started_at, self._stop_event),
@@ -156,19 +158,18 @@ class SubtitlePlayer:
             # transcode offset even when copyts=1. Detect that coordinate
             # system from the first useful cues and normalize everything to
             # the absolute Plex playback timeline.
-            if parsed and not self._timeline_mode_logged:
+            if parsed and self._timeline_mode is None:
                 first = parsed[0]
                 last = parsed[-1]
                 if self._started_at >= 5.0 and last.end < self._started_at - 2.0:
+                    self._timeline_mode = "relative"
                     self._timeline_offset = self._started_at
-                    mode = "relative"
                 else:
+                    self._timeline_mode = "absolute"
                     self._timeline_offset = 0.0
-                    mode = "absolute"
-                self._timeline_mode_logged = True
                 logger.info(
                     "Subtitle timeline mode=%s requested_offset=%.3f raw_first=%.3f-%.3f raw_last=%.3f-%.3f cues=%s",
-                    mode,
+                    self._timeline_mode,
                     self._started_at,
                     first.start,
                     first.end,
@@ -192,7 +193,7 @@ class SubtitlePlayer:
             self._cues = merge_cues(self._cues, normalized)
 
             if self._cues:
-                logger.info(
+                logger.debug(
                     "Subtitle buffer cues=%s first=%.3f-%.3f last=%.3f-%.3f",
                     len(self._cues),
                     self._cues[0].start,
