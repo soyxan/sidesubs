@@ -259,7 +259,7 @@ class PlexProvider(MediaProvider):
                 timeout=3,
             )
             response.raise_for_status()
-            logger.info("Stopped Plex transcode session=%s", transcode_session)
+            logger.debug("Stopped Plex transcode session=%s", transcode_session)
         except Exception as exc:
             logger.warning("Unable to stop Plex transcode session=%s: %s", transcode_session, exc)
 
@@ -371,7 +371,7 @@ class PlexProvider(MediaProvider):
                     except Exception:
                         logger.exception("Unable to restore Plex subtitle stream %s", old_stream_id)
 
-        logger.info(
+        logger.debug(
             "Opened Plex subtitle polling session rating_key=%s stream=%s offset=%.1f session=%s",
             rating_key,
             stream_id,
@@ -459,7 +459,7 @@ class PlexProvider(MediaProvider):
 
         finally:
             self._stop_transcode(transcode_session)
-            logger.info(
+            logger.debug(
                 "Closed Plex subtitle polling session rating_key=%s stream=%s requests=%s",
                 rating_key,
                 stream_id,
