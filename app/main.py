@@ -219,7 +219,7 @@ def status(preferred_language: str = "", subtitle_id: str = ""):
                 if cues:
                     current, next_cue = cue_pair(cues, session.position)
         except Exception as exc:
-            subtitle_error = str(exc)
+            subtitle_error = "Subtitle stream temporarily unavailable"
             logger.warning("Subtitle loading failed: %s", exc)
 
         logger.debug(
@@ -243,7 +243,7 @@ def status(preferred_language: str = "", subtitle_id: str = ""):
             "media_found": True,
             "subtitle_tracks": [track.as_dict() for track in tracks],
             "selected_subtitle_id": selected_track.id if selected_track else None,
-            "subtitle_found": bool(cues) and subtitle_error is None,
+            "subtitle_found": selected_track is not None,
             "subtitle_error": subtitle_error,
             "current": serialize_cue(current),
             "next": serialize_cue(next_cue),
