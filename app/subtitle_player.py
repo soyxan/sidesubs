@@ -77,26 +77,28 @@ class SubtitlePlayer:
             # playback catches up and SideSubs shows temporary gaps.
             with self._lock:
                 resume_position = position
+                has_buffer = bool(self._cues)
                 if self._cues:
-                    resume_position = max(
-                        position,
-                        self._cues[-1].end + self.START_PREROLL_SECONDS + 0.50,
-                    )
+                    # Resume strictly beyond the last buffered cue. Do not
+                    # apply normal playback preroll here, otherwise the PMS
+                    # request falls back onto the cue that caused the recycle.
+                    resume_position = max(position, self._cues[-1].end + 1.25)
             logger.info(
-                "Subtitle transport resume playback=%.3f resume=%.3f buffered_last_end=%s",
+                "Subtitle transport resume playback=%.3f resume=%.3f buffered_last_end=%s preroll=%s",
                 position,
                 resume_position,
                 f"{self._cues[-1].end:.3f}" if self._cues else "<none>",
+                not has_buffer,
             )
-            self.start(resume_position)
+            self.start(resume_position, preroll=not has_buffer)
 
         return self.cues()
 
-    def start(self, position: float) -> None:
+    def start(self, position: float, *, preroll: bool = True) -> None:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 return
-            self._start_locked(position)
+            self._start_locked(position, preroll=preroll)
 
     def restart(self, position: float) -> None:
         self.stop(join_timeout=0.75)
@@ -105,13 +107,14 @@ class SubtitlePlayer:
             self._error = None
             self._timeline_offset = 0.0
             self._timeline_mode_logged = False
-            self._start_locked(position)
+            self._start_locked(position, preroll=True)
 
-    def _start_locked(self, position: float) -> None:
+    def _start_locked(self, position: float, *, preroll: bool = True) -> None:
         self._generation += 1
         generation = self._generation
         self._stop_event = threading.Event()
-        self._started_at = max(0.0, position - self.START_PREROLL_SECONDS)
+        offset = self.START_PREROLL_SECONDS if preroll else 0.0
+        self._started_at = max(0.0, position - offset)
         thread = threading.Thread(
             target=self._run,
             args=(generation, self._started_at, self._stop_event),
