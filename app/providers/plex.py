@@ -348,7 +348,7 @@ class PlexProvider(MediaProvider):
                     if first_cues:
                         params["offset"] = max(
                             int(params["offset"]),
-                            math.ceil(first_cues[-1].end + 0.10),
+                            math.ceil(first_cues[-1].end) + 1,
                         )
                     logger.info(
                         "Plex subtitle segment session=%s request=1 bytes=%s cues=%s next_offset=%s",
@@ -398,7 +398,7 @@ class PlexProvider(MediaProvider):
                         if segment_cues:
                             params["offset"] = max(
                                 int(params["offset"]),
-                                math.ceil(segment_cues[-1].end + 0.10),
+                                math.ceil(segment_cues[-1].end) + 1,
                             )
                         logger.info(
                             "Plex subtitle segment session=%s request=%s bytes=%s cues=%s next_offset=%s",
