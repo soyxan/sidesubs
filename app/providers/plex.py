@@ -27,6 +27,7 @@ class PlexProvider(MediaProvider):
         self.token = token
         self._server: PlexServer | None = None
         self._lock = threading.RLock()
+        self._transcode_lock = threading.Lock()
         self._window_cache: OrderedDict[tuple[str, str, int], tuple[float, tuple[Cue, ...]]] = OrderedDict()
         self._cache_ttl = 20.0
         self._cache_limit = 256
@@ -215,6 +216,15 @@ class PlexProvider(MediaProvider):
         return b""
 
     def _fetch_embedded_at_offset(
+        self,
+        session: PlaybackSession,
+        track: SubtitleTrack,
+        offset: int,
+    ) -> tuple[Cue, ...]:
+        with self._transcode_lock:
+            return self._fetch_embedded_at_offset_locked(session, track, offset)
+
+    def _fetch_embedded_at_offset_locked(
         self,
         session: PlaybackSession,
         track: SubtitleTrack,
