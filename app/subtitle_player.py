@@ -24,6 +24,8 @@ class SubtitlePlayer:
 
     SEEK_THRESHOLD_SECONDS = 3.0
     START_PREROLL_SECONDS = 2.0
+    BUFFER_AHEAD_TARGET_SECONDS = 12.0
+    RECYCLE_RESUME_EPSILON_SECONDS = 0.05
 
     def __init__(self, stream_runner: StreamRunner):
         self._stream_runner = stream_runner
@@ -70,24 +72,37 @@ class SubtitlePlayer:
             logger.info("Subtitle player seek detected: position=%.3f", position)
             self.restart(position)
         elif needs_start:
-            # A transport session may end/recycle while the persistent player
-            # already has cues buffered ahead of playback. Resume beyond the
-            # last known cue instead of reopening from the current playback
-            # position, otherwise PMS can keep returning the same cue until
-            # playback catches up and SideSubs shows temporary gaps.
+            # A recycled Plex transport does not need to be reopened while the
+            # persistent player already has a healthy amount of subtitle data
+            # buffered ahead. Waiting here prevents constant transcode churn.
             with self._lock:
-                resume_position = position
                 has_buffer = bool(self._cues)
-                if self._cues:
-                    # Resume strictly beyond the last buffered cue. Do not
-                    # apply normal playback preroll here, otherwise the PMS
-                    # request falls back onto the cue that caused the recycle.
-                    resume_position = max(position, self._cues[-1].end + 1.25)
+                buffered_last_end = self._cues[-1].end if self._cues else None
+                buffered_ahead = (
+                    buffered_last_end - position
+                    if buffered_last_end is not None
+                    else 0.0
+                )
+
+                if has_buffer and buffered_ahead >= self.BUFFER_AHEAD_TARGET_SECONDS:
+                    return self._cues
+
+                resume_position = position
+                if buffered_last_end is not None:
+                    # Resume immediately after the last known cue. Keep the
+                    # epsilon tiny: the previous 1.25 s gap could skip short
+                    # subtitles between adjacent cues.
+                    resume_position = max(
+                        position,
+                        buffered_last_end + self.RECYCLE_RESUME_EPSILON_SECONDS,
+                    )
+
             logger.info(
-                "Subtitle transport resume playback=%.3f resume=%.3f buffered_last_end=%s preroll=%s",
+                "Subtitle transport resume playback=%.3f resume=%.3f buffered_last_end=%s buffered_ahead=%.3f preroll=%s",
                 position,
                 resume_position,
-                f"{self._cues[-1].end:.3f}" if self._cues else "<none>",
+                f"{buffered_last_end:.3f}" if buffered_last_end is not None else "<none>",
+                buffered_ahead,
                 not has_buffer,
             )
             self.start(resume_position, preroll=not has_buffer)
