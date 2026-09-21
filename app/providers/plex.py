@@ -375,6 +375,8 @@ class PlexProvider(MediaProvider):
         )
 
         request_count = 1
+        last_cue_signature = None
+        repeated_cue_count = 0
         try:
             while not stop_event.is_set():
                 response = None
@@ -396,18 +398,48 @@ class PlexProvider(MediaProvider):
                         on_payload(payload)
                         received = True
                         if segment_cues:
+                            last_cue = segment_cues[-1]
+                            signature = (
+                                round(last_cue.start, 3),
+                                round(last_cue.end, 3),
+                                last_cue.text,
+                            )
+                            if signature == last_cue_signature:
+                                repeated_cue_count += 1
+                            else:
+                                last_cue_signature = signature
+                                repeated_cue_count = 0
+
                             params["offset"] = max(
                                 int(params["offset"]),
-                                math.ceil(segment_cues[-1].end) + 1,
+                                math.ceil(last_cue.end) + 1,
                             )
                         logger.info(
-                            "Plex subtitle segment session=%s request=%s bytes=%s cues=%s next_offset=%s",
+                            "Plex subtitle segment session=%s request=%s bytes=%s cues=%s next_offset=%s repeats=%s",
                             transcode_session,
                             request_count,
                             len(payload),
                             len(segment_cues),
                             params["offset"],
+                            repeated_cue_count,
                         )
+
+                        # PMS can pin a transcode session to its original
+                        # subtitle position and then return the same cue
+                        # forever even when the request offset is advanced.
+                        # End only this transport session after a few duplicate
+                        # responses. SubtitlePlayer keeps its accumulated
+                        # timeline and will open a fresh PMS session on the next
+                        # status poll from the current playback position.
+                        if segment_cues and repeated_cue_count >= 3:
+                            logger.info(
+                                "Recycling stalled Plex subtitle session=%s repeated_cue=%.3f-%.3f next_offset=%s",
+                                transcode_session,
+                                segment_cues[-1].start,
+                                segment_cues[-1].end,
+                                params["offset"],
+                            )
+                            break
 
                 except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError):
                     # No subtitle became available during this poll. Reopen the
