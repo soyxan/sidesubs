@@ -119,8 +119,8 @@ http://YOUR-SERVER-IP:8085
 5. SideSubs discovers subtitle streams from Plex metadata rather than inspecting the media file itself.
 6. SideSubs chooses a compatible track using the preferred language unless a specific track has been selected for that title.
 7. External text subtitles are fetched directly from Plex when a stream key is available.
-8. Embedded text subtitles are opened as a persistent Plex subtitle stream. A background SubtitlePlayer continuously buffers timed-text cues in memory while playback advances.
-9. The backend smooths Plex playback-position updates and uses that clock to choose the current and next cue from the in-memory timeline. A seek restarts the subtitle stream near the new position; pause/resume does not recreate it.
+8. Embedded text subtitles are managed by a persistent background `SubtitlePlayer`. It buffers timed-text cues in memory while opening and, when PMS stalls, recycling short-lived Plex transcode transports behind the scenes.
+9. The backend smooths Plex playback-position updates and uses that clock to choose the current and next cue from the in-memory timeline. A confirmed seek resets the subtitle timeline near the new position; ordinary transport recycling and pause/resume keep the buffered timeline.
 10. The client renders the synchronized current and next subtitle. The configured delay is applied to the subtitle playback clock, without delaying API responses or changing Plex playback.
 
 If the selected Plex session disappears, SideSubs does **not** silently switch to another player. The UI indicates that the selected session is no longer available.
@@ -139,11 +139,11 @@ External subtitle tracks exposed by Plex are fetched through Plex itself. SideSu
 
 ### Embedded subtitles
 
-Embedded text subtitle streams are identified from Plex metadata. SideSubs opens one persistent PMS timed-text stream for the selected title/track and continuously parses the returned ASS/SRT/WebVTT-compatible payload into an in-memory cue timeline.
+Embedded text subtitle streams are identified from Plex metadata. SideSubs keeps one persistent logical subtitle player for the selected title/track and parses ASS/SRT/WebVTT-compatible payloads into an in-memory cue timeline. PMS transcode transports may be recycled transparently if Plex stops advancing a subtitle response.
 
 Supported text codecs include SRT/SubRip, ASS/SSA, WebVTT and mov_text. Image-based subtitle formats such as PGS may appear in the selector as unsupported, but SideSubs does not currently render them as text.
 
-Plex versions differ in whether `subtitleStreamID` is honored directly in a universal-transcode request. The Plex adapter first attempts per-request selection. If PMS does not honor it, SideSubs briefly selects the stream on the Plex Part while establishing its own subtitle stream, then immediately restores the previous selection. The persistent SideSubs stream continues independently after that.
+Plex versions differ in whether `subtitleStreamID` is honored directly in a universal-transcode request. The Plex adapter briefly selects the requested stream on the Plex Part while establishing each SideSubs subtitle transport, then restores the previous selection immediately after the first payload. The logical SideSubs subtitle player remains independent and preserves its buffered timeline across transport recycling.
 
 ## Interface
 
