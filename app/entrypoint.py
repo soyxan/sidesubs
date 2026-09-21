@@ -19,7 +19,7 @@ _selected_player_id: contextvars.ContextVar[str | None] = contextvars.ContextVar
 )
 
 RAW_CHANGE_EPSILON_SECONDS = 0.20
-SEEK_THRESHOLD_SECONDS = 12.0
+SEEK_THRESHOLD_SECONDS = 2.5
 
 
 def _session_key(session: PlaybackSession) -> str:
@@ -53,27 +53,49 @@ def _smooth_position(session: PlaybackSession) -> None:
             predicted = float(previous["position"]) + elapsed
             previous_raw = float(previous["raw_position"])
             raw_change = raw_position - previous_raw
+            pending_raw = previous.get("pending_backward_raw")
+            pending_time = previous.get("pending_backward_time")
+            confirmed_backward_seek = False
 
-            if abs(raw_change) <= RAW_CHANGE_EPSILON_SECONDS:
-                position = predicted
-            elif raw_change < -SEEK_THRESHOLD_SECONDS:
-                position = raw_position
-            elif raw_change < 0:
-                # Plex can briefly report stale viewOffset values several
-                # seconds behind the real playback position. Treat short
-                # backward jumps as jitter, not as seeks.
-                position = predicted
-            elif raw_change > elapsed + SEEK_THRESHOLD_SECONDS:
-                position = raw_position
-            else:
-                position = max(predicted, raw_position)
+            # PMS can briefly emit one stale viewOffset several seconds behind
+            # playback. Do not accept that single sample as a seek. If the next
+            # raw sample continues from the lower timeline, confirm the seek;
+            # if it jumps back to the old timeline, treat the first sample as
+            # transient jitter.
+            if pending_raw is not None and pending_time is not None:
+                pending_elapsed = max(0.0, now - float(pending_time))
+                expected_pending = float(pending_raw) + pending_elapsed
+                if abs(raw_position - expected_pending) <= 1.5:
+                    position = raw_position
+                    confirmed_backward_seek = True
+                else:
+                    pending_raw = None
+                    pending_time = None
 
-        _clocks[key] = {
+            if not confirmed_backward_seek:
+                if abs(raw_change) <= RAW_CHANGE_EPSILON_SECONDS:
+                    position = predicted
+                elif raw_change < -SEEK_THRESHOLD_SECONDS:
+                    position = predicted
+                    pending_raw = raw_position
+                    pending_time = now
+                elif raw_change < 0:
+                    position = predicted
+                elif raw_change > elapsed + SEEK_THRESHOLD_SECONDS:
+                    position = raw_position
+                else:
+                    position = max(predicted, raw_position)
+
+        clock = {
             "position": position,
             "raw_position": raw_position,
             "time": now,
             "state": state,
         }
+        if state == "playing" and "pending_raw" in locals() and pending_raw is not None:
+            clock["pending_backward_raw"] = pending_raw
+            clock["pending_backward_time"] = pending_time
+        _clocks[key] = clock
 
     session.position = position
 
