@@ -46,6 +46,9 @@ def _smooth_position(session: PlaybackSession) -> None:
             session.position = position
             return
 
+        pending_raw = None
+        pending_time = None
+
         if previous is None or previous.get("state") != "playing":
             position = raw_position
         else:
@@ -92,7 +95,7 @@ def _smooth_position(session: PlaybackSession) -> None:
             "time": now,
             "state": state,
         }
-        if state == "playing" and "pending_raw" in locals() and pending_raw is not None:
+        if pending_raw is not None:
             clock["pending_backward_raw"] = pending_raw
             clock["pending_backward_time"] = pending_time
         _clocks[key] = clock
