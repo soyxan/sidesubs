@@ -215,7 +215,7 @@ def status(preferred_language: str = "", subtitle_id: str = ""):
             tracks = media_provider.list_subtitle_tracks(session)
             selected_track = choose_subtitle_track(tracks, preferred_language, subtitle_id)
             if selected_track:
-                cues = media_provider.load_subtitle_window(session, selected_track, session.position)
+                cues = media_provider.subtitle_cues(session, selected_track, session.position)
                 if cues:
                     current, next_cue = cue_pair(cues, session.position)
         except Exception as exc:
