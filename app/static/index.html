@@ -949,21 +949,6 @@
     el("status").textContent = data.subtitle_error || "✓ Synchronized";
   }
 
-  function enqueueForDelayedRender(data) {
-    const now = performance.now();
-    delayedQueue.push({ due: now + subtitleDelayMs, data });
-    while (delayedQueue.length > 1 && delayedQueue[1].due <= now) delayedQueue.shift();
-
-    if (subtitleDelayMs === 0) {
-      data.active ? renderActive(data) : renderIdle();
-        return;
-    }
-    if (delayedQueue.length && delayedQueue[0].due <= now) {
-      const item = delayedQueue.shift();
-      item.data.active ? renderActive(item.data) : renderIdle();
-    }
-  }
-
   async function refresh() {
     try {
       const manualTrack = selectedSubtitleId();
