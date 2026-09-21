@@ -12,7 +12,7 @@ SideSubs is designed primarily for trusted home-LAN use.
 - Explicit Plex session selection.
 - Smooth playback clock to compensate for coarse Plex `viewOffset` updates.
 - Current and next subtitle shown together.
-- Adjustable subtitle delay stored per browser/device.
+- Adjustable subtitle delay stored per browser/device and applied directly to the subtitle playback clock.
 - Preferred subtitle language stored per browser/device.
 - Per-title manual subtitle track selection.
 - Subtitle discovery from Plex metadata, including external and embedded text tracks.
@@ -121,7 +121,7 @@ http://YOUR-SERVER-IP:8085
 7. External text subtitles are fetched directly from Plex when a stream key is available.
 8. Embedded text subtitles are opened as a persistent Plex subtitle stream. A background SubtitlePlayer continuously buffers timed-text cues in memory while playback advances.
 9. The backend smooths Plex playback-position updates and uses that clock to choose the current and next cue from the in-memory timeline. A seek restarts the subtitle stream near the new position; pause/resume does not recreate it.
-10. The client renders the synchronized current and next subtitle. An optional client-side delay can shift subtitle presentation without changing playback.
+10. The client renders the synchronized current and next subtitle. The configured delay is applied to the subtitle playback clock, without delaying API responses or changing Plex playback.
 
 If the selected Plex session disappears, SideSubs does **not** silently switch to another player. The UI indicates that the selected session is no longer available.
 
