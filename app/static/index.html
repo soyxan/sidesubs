@@ -929,13 +929,6 @@
     el("title").textContent = data.title || "Plex";
     el("meta").textContent = `${data.client || "Plex"} · ${formatTime(data.position)} · ${data.state || ""}`;
 
-    if (!data.media_found) {
-      el("current").textContent = "Cannot access the media file";
-      el("next").textContent = "";
-      el("status").textContent = "Check the media path configuration";
-      return;
-    }
-
     if (!data.subtitle_found) {
       el("current").textContent = "No compatible subtitles found";
       el("next").textContent = "";
