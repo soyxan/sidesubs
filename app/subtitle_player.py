@@ -31,7 +31,7 @@ class SubtitlePlayer:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._generation = 0
-        self._text_buffer = ""
+        self._byte_buffer = b""
         self._cues: tuple[Cue, ...] = ()
         self._last_position: float | None = None
         self._last_sync_at: float | None = None
@@ -82,7 +82,7 @@ class SubtitlePlayer:
     def restart(self, position: float) -> None:
         self.stop(join_timeout=0.75)
         with self._lock:
-            self._text_buffer = ""
+            self._byte_buffer = b""
             self._cues = ()
             self._error = None
             self._start_locked(position)
@@ -120,15 +120,17 @@ class SubtitlePlayer:
     def _on_payload(self, generation: int, payload: bytes) -> None:
         if not payload:
             return
-        text = payload.decode("utf-8", errors="replace")
         with self._lock:
             if generation != self._generation:
                 return
-            self._text_buffer += text
+            self._byte_buffer += payload
+            # Decode the complete accumulated byte stream so an HTTP chunk
+            # boundary cannot corrupt a multi-byte UTF-8 character.
+            text = self._byte_buffer.decode("utf-8", errors="replace")
             # Subtitle streams are tiny compared with media. Keeping the
             # accumulated text lets ASS fragments without repeated headers be
             # parsed correctly and still remains bounded for normal titles.
-            self._cues = parse_timed_text(self._text_buffer)
+            self._cues = parse_timed_text(text)
             self._error = None
 
     def _run(self, generation: int, start_position: float, stop_event: threading.Event) -> None:
