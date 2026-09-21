@@ -258,15 +258,28 @@ class PlexProvider(MediaProvider):
                 )
                 decision.raise_for_status()
 
-            with requests.get(
-                f"{self.base_url}/video/:/transcode/universal/subtitles",
-                params=params,
-                headers=headers,
-                stream=True,
-                timeout=(5, 5),
-            ) as response:
-                response.raise_for_status()
-                payload = self._read_first_subtitle_chunk(response)
+            try:
+                with requests.get(
+                    f"{self.base_url}/video/:/transcode/universal/subtitles",
+                    params=params,
+                    headers=headers,
+                    stream=True,
+                    timeout=(4, 3),
+                ) as response:
+                    response.raise_for_status()
+                    payload = self._read_first_subtitle_chunk(response)
+            except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError):
+                # A quiet dialogue interval can leave PMS' chunked subtitle
+                # response open without producing a chunk before our read timeout.
+                # That is not a subtitle-track failure: it simply means this
+                # requested window contained no immediately available cue.
+                logger.debug(
+                    "Plex subtitle window timed out rating_key=%s stream=%s offset=%s",
+                    session.rating_key,
+                    stream_id,
+                    offset,
+                )
+                return ()
 
             if not payload:
                 return ()
@@ -361,38 +374,50 @@ class PlexProvider(MediaProvider):
         if track.source == "external" and track.provider_data.get("key"):
             return self._fetch_external(track)
 
-        # Keep the synchronous window close to the actual playback position.
-        # The previous 5-second buckets were too coarse and could make SideSubs
-        # visibly trail playback. Two-second buckets keep PMS work bounded while
-        # reducing timing error, and the next window is prefetched asynchronously
-        # so normal polling stays on cached data.
-        bucket = max(0, int(position // 2) * 2)
-        current_offset = max(0, bucket - 1)
-        next_offset = bucket + 2
+        # PMS can take a few seconds to materialize a subtitle chunk. Never
+        # make cue presentation wait for that work: keep a predictive rolling
+        # cache ahead of playback and return whatever is already available.
+        #
+        # Four-second buckets limit transcode churn while look-ahead requests
+        # at +4/+8/+12 seconds give PMS time to prepare cues before playback
+        # reaches them.
+        bucket = max(0, int(position // 4) * 4)
+        offsets = [
+            max(0, bucket - 4),
+            bucket,
+            bucket + 4,
+            bucket + 8,
+            bucket + 12,
+        ]
 
-        first = self._cached_window(session, track, current_offset)
-        second = self._get_cached_window(session, track, next_offset)
+        groups: list[tuple[Cue, ...]] = []
+        missing: list[int] = []
+        for offset in offsets:
+            cached = self._get_cached_window(session, track, offset)
+            if cached is None:
+                missing.append(offset)
+            else:
+                groups.append(cached)
 
-        # Always warm the upcoming window without blocking /api/status.
-        if second is None:
-            self._prefetch_window(session, track, next_offset)
-            second = ()
+        # Cold start: fetch only one nearby window synchronously. All other PMS
+        # work happens in background so normal /api/status polling stays fast.
+        if not groups:
+            initial_offset = max(0, bucket - 2)
+            try:
+                groups.append(self._cached_window(session, track, initial_offset))
+            except requests.RequestException:
+                logger.debug(
+                    "Initial Plex subtitle fetch failed rating_key=%s track=%s offset=%s",
+                    session.rating_key,
+                    track.id,
+                    initial_offset,
+                    exc_info=True,
+                )
 
-        combined = merge_cues(first, second)
+        for offset in missing:
+            self._prefetch_window(session, track, offset)
 
-        # If the current PMS chunk contains neither the active cue nor a future
-        # cue, make one precise fetch at the current second. This avoids waiting
-        # for the next bucket during sparse dialogue.
-        has_relevant_cue = any(
-            cue.end >= position - 1.5 and cue.start <= position + 4.0
-            for cue in combined
-        )
-        if not has_relevant_cue:
-            precise_offset = max(0, int(position))
-            precise = self._cached_window(session, track, precise_offset)
-            combined = merge_cues(combined, precise)
-
-        return combined
+        return merge_cues(*groups)
 
     def diagnostics(self) -> dict:
         plex = self._plex()
