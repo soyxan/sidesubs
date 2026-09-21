@@ -256,6 +256,34 @@ class PlexProvider(MediaProvider):
             len(response.content),
         )
 
+    def _read_subtitle_segment(
+        self,
+        response: requests.Response,
+        stop_event: threading.Event,
+        max_bytes: int = 65536,
+    ) -> bytes:
+        """Read enough of one PMS subtitle response to include timed text.
+
+        Plex ASS responses begin with a sizeable script/style header. Reading
+        only the first HTTP chunk can therefore return no Dialogue lines at all.
+        Accumulate until at least one cue parses, the response ends, or a sane
+        safety limit is reached.
+        """
+        payload = bytearray()
+        for chunk in response.iter_content(chunk_size=4096):
+            if stop_event.is_set():
+                break
+            if not chunk:
+                continue
+            payload.extend(chunk)
+
+            text = bytes(payload).decode("utf-8", errors="replace")
+            if parse_timed_text(text):
+                break
+            if len(payload) >= max_bytes:
+                break
+        return bytes(payload)
+
     def _run_embedded_stream(
         self,
         rating_key: str,
@@ -312,19 +340,15 @@ class PlexProvider(MediaProvider):
                     timeout=(5, 5),
                 )
                 first_response.raise_for_status()
-                got_payload = False
-                for chunk in first_response.iter_content(chunk_size=512):
-                    if stop_event.is_set():
-                        break
-                    if chunk:
-                        on_payload(chunk)
-                        got_payload = True
-                    # A single Plex subtitle response represents the currently
-                    # available subtitle segment. Once payload has started,
-                    # close it and immediately request the next segment instead
-                    # of waiting for this connection to remain productive.
-                    if got_payload:
-                        break
+                first_payload = self._read_subtitle_segment(first_response, stop_event)
+                if first_payload:
+                    on_payload(first_payload)
+                    logger.debug(
+                        "Plex subtitle segment session=%s request=1 bytes=%s cues=%s",
+                        transcode_session,
+                        len(first_payload),
+                        len(parse_timed_text(first_payload.decode("utf-8", errors="replace"))),
+                    )
             finally:
                 if first_response is not None:
                     first_response.close()
@@ -358,16 +382,17 @@ class PlexProvider(MediaProvider):
                     response.raise_for_status()
                     request_count += 1
 
-                    for chunk in response.iter_content(chunk_size=512):
-                        if stop_event.is_set():
-                            break
-                        if not chunk:
-                            continue
-                        on_payload(chunk)
+                    payload = self._read_subtitle_segment(response, stop_event)
+                    if payload:
+                        on_payload(payload)
                         received = True
-                        # Each request is treated as one long-poll segment.
-                        # Reconnect immediately so PMS can return the next one.
-                        break
+                        logger.debug(
+                            "Plex subtitle segment session=%s request=%s bytes=%s cues=%s",
+                            transcode_session,
+                            request_count,
+                            len(payload),
+                            len(parse_timed_text(payload.decode("utf-8", errors="replace"))),
+                        )
 
                 except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError):
                     # No subtitle became available during this poll. Reopen the
