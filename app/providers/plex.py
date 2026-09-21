@@ -235,6 +235,27 @@ class PlexProvider(MediaProvider):
             self._external_cache[cache_key] = cues
         return cues
 
+    def _start_dash_transcode(self, params: dict, headers: dict) -> None:
+        """Kick the same DASH session used by Plex Web.
+
+        PMS exposes subtitles through the universal subtitle endpoint, but the
+        underlying transcoder is started by the companion start.mpd request.
+        Without this request Plex can yield only the initial subtitle fragment
+        and then stall.
+        """
+        response = requests.get(
+            f"{self.base_url}/video/:/transcode/universal/start.mpd",
+            params=params,
+            headers=headers,
+            timeout=10,
+        )
+        response.raise_for_status()
+        logger.debug(
+            "Started Plex DASH transcode session=%s bytes=%s",
+            params.get("session"),
+            len(response.content),
+        )
+
     def _run_embedded_stream(
         self,
         rating_key: str,
@@ -290,6 +311,11 @@ class PlexProvider(MediaProvider):
                 )
                 response.raise_for_status()
                 chunk_iterator = response.iter_content(chunk_size=512)
+
+                # Plex Web opens start.mpd for the same DASH session almost
+                # simultaneously with /subtitles. That request starts the
+                # underlying transcoder which then feeds subtitle segments.
+                self._start_dash_transcode(params, headers)
 
                 # Prime the stream while the requested Part subtitle is still
                 # selected. This mirrors the manual test that successfully
