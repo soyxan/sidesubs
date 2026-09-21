@@ -259,7 +259,6 @@
   let currentSessions = [];
   let currentSubtitleTracks = [];
   let currentAutoSubtitleId = "";
-  let delayedQueue = [];
   let settingsLanguageDraft = preferredLanguage;
   let subtitleSize = localStorage.getItem("subtitleSize") || "medium";
   let settingsSubtitleSizeDraft = subtitleSize;
@@ -322,7 +321,6 @@
     subtitleDelayMs = Math.max(0, Math.min(5000, value));
     settingsDelayDraft = subtitleDelayMs;
     localStorage.setItem("subtitleDelayMs", String(subtitleDelayMs));
-    delayedQueue = [];
     updateDelayLabel();
     if (showNotice) notice(`Delay: ${formatDelay(subtitleDelayMs)}`);
     showControls();
@@ -339,7 +337,6 @@
   function setSelectedPlayer(playerId) {
     selectedPlayerId = playerId || "";
     currentRatingKey = "";
-    delayedQueue = [];
     if (selectedPlayerId) localStorage.setItem("selectedPlayerId", selectedPlayerId);
     else localStorage.removeItem("selectedPlayerId");
   }
@@ -353,7 +350,6 @@
     if (trackId) subtitleSelections[ratingKey] = trackId;
     else delete subtitleSelections[ratingKey];
     localStorage.setItem("subtitleSelections", JSON.stringify(subtitleSelections));
-    delayedQueue = [];
   }
 
   function subtitleLabel(track) {
@@ -852,7 +848,6 @@
     localStorage.setItem("subtitleDelayMs", String(subtitleDelayMs));
     applySubtitleSize(subtitleSize);
     updateDelayLabel();
-    delayedQueue = [];
     closeSettings();
     notice("Subtitle size: " + subtitleSizeOption(subtitleSize).label);
   });
@@ -961,8 +956,7 @@
 
     if (subtitleDelayMs === 0) {
       data.active ? renderActive(data) : renderIdle();
-      delayedQueue = [];
-      return;
+        return;
     }
     if (delayedQueue.length && delayedQueue[0].due <= now) {
       const item = delayedQueue.shift();
@@ -977,13 +971,14 @@
         player_id: selectedPlayerId,
         preferred_language: preferredLanguage,
         subtitle_id: manualTrack,
+        delay_ms: String(subtitleDelayMs),
       });
       const response = await fetch(`/api/status?${params.toString()}`, { cache: "no-store" });
       const data = await response.json();
       el("current").classList.remove("error");
       if (!data.ok) throw new Error(data.error || "Unknown error");
       pollMs = data.poll_interval_ms || pollMs;
-      enqueueForDelayedRender(data);
+      data.active ? renderActive(data) : renderIdle();
     } catch (error) {
       el("title").textContent = "Error";
       el("meta").textContent = "";
