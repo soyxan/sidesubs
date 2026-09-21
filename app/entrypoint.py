@@ -19,7 +19,7 @@ _selected_player_id: contextvars.ContextVar[str | None] = contextvars.ContextVar
 )
 
 RAW_CHANGE_EPSILON_SECONDS = 0.20
-SEEK_THRESHOLD_SECONDS = 2.5
+SEEK_THRESHOLD_SECONDS = 12.0
 
 
 def _session_key(session: PlaybackSession) -> str:
@@ -58,6 +58,11 @@ def _smooth_position(session: PlaybackSession) -> None:
                 position = predicted
             elif raw_change < -SEEK_THRESHOLD_SECONDS:
                 position = raw_position
+            elif raw_change < 0:
+                # Plex can briefly report stale viewOffset values several
+                # seconds behind the real playback position. Treat short
+                # backward jumps as jitter, not as seeks.
+                position = predicted
             elif raw_change > elapsed + SEEK_THRESHOLD_SECONDS:
                 position = raw_position
             else:
