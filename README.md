@@ -38,7 +38,7 @@ provider interface
        +-- JellyfinProvider   (future)
 ```
 
-The provider boundary exposes playback sessions, subtitle tracks and nearby timed-text cues. Synchronization, language selection, delay, cue rendering and the HTTP API are independent of Plex-specific objects.
+The provider boundary exposes playback sessions, subtitle tracks and a provider-neutral subtitle player. Synchronization, language selection, delay, cue rendering and the HTTP API are independent of Plex-specific objects.
 
 Only Plex is implemented today. `MEDIA_PROVIDER=plex` is therefore the only supported provider value, but the separation is intentional so a future Emby or Jellyfin adapter does not require rewriting the SideSubs UI or subtitle-selection logic.
 
@@ -119,8 +119,8 @@ http://YOUR-SERVER-IP:8085
 5. SideSubs discovers subtitle streams from Plex metadata rather than inspecting the media file itself.
 6. SideSubs chooses a compatible track using the preferred language unless a specific track has been selected for that title.
 7. External text subtitles are fetched directly from Plex when a stream key is available.
-8. Embedded text subtitles are requested through Plex's universal transcode subtitle endpoint. SideSubs asks only for small cached windows around the current playback position instead of transcoding the whole title on every poll.
-9. The backend smooths Plex playback-position updates.
+8. Embedded text subtitles are opened as a persistent Plex subtitle stream. A background SubtitlePlayer continuously buffers timed-text cues in memory while playback advances.
+9. The backend smooths Plex playback-position updates and uses that clock to choose the current and next cue from the in-memory timeline. A seek restarts the subtitle stream near the new position; pause/resume does not recreate it.
 10. The client renders the synchronized current and next subtitle. An optional client-side delay can shift subtitle presentation without changing playback.
 
 If the selected Plex session disappears, SideSubs does **not** silently switch to another player. The UI indicates that the selected session is no longer available.
@@ -139,11 +139,11 @@ External subtitle tracks exposed by Plex are fetched through Plex itself. SideSu
 
 ### Embedded subtitles
 
-Embedded text subtitle streams are identified from Plex metadata. SideSubs asks PMS to expose the selected embedded stream as timed text near the current playback position and parses the returned ASS/SRT/WebVTT-compatible payload.
+Embedded text subtitle streams are identified from Plex metadata. SideSubs opens one persistent PMS timed-text stream for the selected title/track and continuously parses the returned ASS/SRT/WebVTT-compatible payload into an in-memory cue timeline.
 
 Supported text codecs include SRT/SubRip, ASS/SSA, WebVTT and mov_text. Image-based subtitle formats such as PGS may appear in the selector as unsupported, but SideSubs does not currently render them as text.
 
-Plex versions differ in whether `subtitleStreamID` is honored directly in a universal-transcode request. The Plex adapter first attempts per-request selection. If PMS does not honor it, SideSubs temporarily selects the stream on the Plex Part for the short extraction transaction and immediately restores the previous selection.
+Plex versions differ in whether `subtitleStreamID` is honored directly in a universal-transcode request. The Plex adapter first attempts per-request selection. If PMS does not honor it, SideSubs briefly selects the stream on the Plex Part while establishing its own subtitle stream, then immediately restores the previous selection. The persistent SideSubs stream continues independently after that.
 
 ## Interface
 
