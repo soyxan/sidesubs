@@ -294,7 +294,7 @@ class PlexProvider(MediaProvider):
                     params=params,
                     headers=headers,
                     stream=True,
-                    timeout=(5, 60),
+                    timeout=(5, 15),
                 )
                 response.raise_for_status()
             finally:
@@ -324,7 +324,7 @@ class PlexProvider(MediaProvider):
         except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError) as exc:
             if not stop_event.is_set():
                 logger.debug(
-                    "Persistent Plex subtitle stream ended after idle timeout: %s",
+                    "Persistent Plex subtitle stream idle; it will reopen at the current playback position: %s",
                     exc,
                 )
         finally:
