@@ -197,16 +197,6 @@ class PlexProvider(MediaProvider):
         }
 
     @staticmethod
-    def _decision_contains_stream(payload, stream_id: int) -> bool:
-        if isinstance(payload, dict):
-            if str(payload.get("id", "")) == str(stream_id) and payload.get("streamType") == 3:
-                return True
-            return any(PlexProvider._decision_contains_stream(value, stream_id) for value in payload.values())
-        if isinstance(payload, list):
-            return any(PlexProvider._decision_contains_stream(value, stream_id) for value in payload)
-        return False
-
-    @staticmethod
     def _selected_stream_id(part) -> int:
         selected = [stream for stream in part.subtitleStreams() if getattr(stream, "selected", False)]
         return int(getattr(selected[0], "id")) if selected else 0
@@ -318,10 +308,9 @@ class PlexProvider(MediaProvider):
         old_stream_id = 0
         changed_global_selection = False
 
-        # Establish one logical Plex transcode session. Plex Web does not rely
-        # on one endless /subtitles response; it repeatedly requests the same
-        # subtitle endpoint for the same transcode session. SideSubs mirrors
-        # that long-poll/pipelined behaviour below.
+        # Establish one Plex transcode transport. PMS may stop advancing a
+        # transport after some subtitle cues; SubtitlePlayer remains persistent
+        # while stalled Plex transports are recycled below.
         with self._transcode_lock:
             item = self._plex().fetchItem(int(rating_key))
             media = list(getattr(item, "media", []) or [])
@@ -366,7 +355,7 @@ class PlexProvider(MediaProvider):
                             int(params["offset"]),
                             math.ceil(first_cues[-1].end) + 1,
                         )
-                    logger.info(
+                    logger.debug(
                         "Plex subtitle segment session=%s request=1 bytes=%s cues=%s next_offset=%s",
                         transcode_session,
                         len(first_payload),
@@ -430,7 +419,7 @@ class PlexProvider(MediaProvider):
                                 int(params["offset"]),
                                 math.ceil(last_cue.end) + 1,
                             )
-                        logger.info(
+                        logger.debug(
                             "Plex subtitle segment session=%s request=%s bytes=%s cues=%s next_offset=%s repeats=%s",
                             transcode_session,
                             request_count,
