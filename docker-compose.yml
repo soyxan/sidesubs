@@ -8,14 +8,11 @@ services:
       - "${PORT:-8085}:8000"
 
     environment:
+      MEDIA_PROVIDER: "${MEDIA_PROVIDER:-plex}"
       PLEX_URL: "${PLEX_URL:-http://host.docker.internal:32400}"
       PLEX_TOKEN: "${PLEX_TOKEN:?PLEX_TOKEN is required}"
-      PLEX_MEDIA_ROOT: "${PLEX_MEDIA_ROOT:-/data/media}"
-      CONTAINER_MEDIA_ROOT: "/data/media"
+      PLEX_CLIENT_FILTER: "${PLEX_CLIENT_FILTER:-}"
       POLL_INTERVAL_MS: "${POLL_INTERVAL_MS:-750}"
 
     extra_hosts:
       - "host.docker.internal:host-gateway"
-
-    volumes:
-      - "${MEDIA_PATH:-/mnt/data/media}:/data/media:ro"
