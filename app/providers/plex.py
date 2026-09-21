@@ -250,36 +250,29 @@ class PlexProvider(MediaProvider):
         params = self._request_params(rating_key, stream_id, start_position, transcode_session)
 
         response: requests.Response | None = None
+        chunk_iterator = None
         old_stream_id = 0
         changed_global_selection = False
+        restored_selection = False
 
-        # PMS may ignore subtitleStreamID until the Part selection is changed.
-        # Serialize only stream establishment; once HTTP 200 is obtained the
-        # transcode session owns its subtitle stream and Part selection can be
-        # restored immediately.
-        with self._transcode_lock:
-            item = self._plex().fetchItem(int(rating_key))
-            media = list(getattr(item, "media", []) or [])
-            if not media or not getattr(media[0], "parts", None):
-                raise RuntimeError("Plex media item has no parts")
-            part = media[0].parts[0]
-            old_stream_id = self._selected_stream_id(part)
+        # PMS only starts producing the requested embedded subtitle reliably
+        # when that stream is selected on the Part. Keep it selected until the
+        # first real subtitle payload has been received; HTTP 200 alone only
+        # confirms that the chunked response was opened, not that PMS has
+        # materialized the requested subtitle stream yet.
+        try:
+            with self._transcode_lock:
+                item = self._plex().fetchItem(int(rating_key))
+                media = list(getattr(item, "media", []) or [])
+                if not media or not getattr(media[0], "parts", None):
+                    raise RuntimeError("Plex media item has no parts")
+                part = media[0].parts[0]
+                old_stream_id = self._selected_stream_id(part)
 
-            decision = requests.get(
-                f"{self.base_url}/video/:/transcode/universal/decision",
-                params=params,
-                headers=headers,
-                timeout=10,
-            )
-            decision.raise_for_status()
-            try:
-                has_stream = self._decision_contains_stream(decision.json(), stream_id)
-            except ValueError:
-                has_stream = False
+                if old_stream_id != stream_id:
+                    self._select_stream(part_id, stream_id)
+                    changed_global_selection = True
 
-            if not has_stream:
-                self._select_stream(part_id, stream_id)
-                changed_global_selection = old_stream_id != stream_id
                 decision = requests.get(
                     f"{self.base_url}/video/:/transcode/universal/decision",
                     params=params,
@@ -288,7 +281,6 @@ class PlexProvider(MediaProvider):
                 )
                 decision.raise_for_status()
 
-            try:
                 response = requests.get(
                     f"{self.base_url}/video/:/transcode/universal/subtitles",
                     params=params,
@@ -297,42 +289,59 @@ class PlexProvider(MediaProvider):
                     timeout=(5, 15),
                 )
                 response.raise_for_status()
-            finally:
+                chunk_iterator = response.iter_content(chunk_size=512)
+
+                # Prime the stream while the requested Part subtitle is still
+                # selected. This mirrors the manual test that successfully
+                # returned ASS dialogue data.
+                first_chunk = next((chunk for chunk in chunk_iterator if chunk), b"")
+                if first_chunk:
+                    on_payload(first_chunk)
+
                 if changed_global_selection:
-                    try:
-                        self._select_stream(part_id, old_stream_id)
-                    except Exception:
-                        logger.exception("Unable to restore Plex subtitle stream %s", old_stream_id)
+                    self._select_stream(part_id, old_stream_id)
+                    restored_selection = True
 
-        if response is None:
-            return
+            if response is None or chunk_iterator is None:
+                return
 
-        logger.info(
-            "Opened persistent Plex subtitle stream rating_key=%s stream=%s offset=%.1f",
-            rating_key,
-            stream_id,
-            start_position,
-        )
-
-        try:
-            with response:
-                for chunk in response.iter_content(chunk_size=512):
-                    if stop_event.is_set():
-                        break
-                    if chunk:
-                        on_payload(chunk)
-        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError) as exc:
-            if not stop_event.is_set():
-                logger.debug(
-                    "Persistent Plex subtitle stream idle; it will reopen at the current playback position: %s",
-                    exc,
-                )
-        finally:
             logger.info(
-                "Closed persistent Plex subtitle stream rating_key=%s stream=%s",
+                "Opened persistent Plex subtitle stream rating_key=%s stream=%s offset=%.1f",
                 rating_key,
                 stream_id,
+                start_position,
             )
+
+            try:
+                with response:
+                    for chunk in chunk_iterator:
+                        if stop_event.is_set():
+                            break
+                        if chunk:
+                            on_payload(chunk)
+            except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError) as exc:
+                if not stop_event.is_set():
+                    logger.debug(
+                        "Persistent Plex subtitle stream idle; it will reopen at the current playback position: %s",
+                        exc,
+                    )
+            finally:
+                logger.info(
+                    "Closed persistent Plex subtitle stream rating_key=%s stream=%s",
+                    rating_key,
+                    stream_id,
+                )
+        finally:
+            if response is not None:
+                try:
+                    response.close()
+                except Exception:
+                    pass
+            if changed_global_selection and not restored_selection:
+                try:
+                    self._select_stream(part_id, old_stream_id)
+                except Exception:
+                    logger.exception("Unable to restore Plex subtitle stream %s", old_stream_id)
 
     def _player_key(self, session: PlaybackSession, track: SubtitleTrack) -> tuple[str, str, str]:
         return (session.player_id, session.rating_key, track.id)
