@@ -6,7 +6,7 @@ import time
 from collections.abc import Callable
 
 from app.domain import Cue
-from app.subtitles import parse_timed_text
+from app.subtitles import merge_cues, parse_timed_text
 
 
 logger = logging.getLogger("sidesubs.subtitle_player")
@@ -31,7 +31,6 @@ class SubtitlePlayer:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._generation = 0
-        self._byte_buffer = b""
         self._cues: tuple[Cue, ...] = ()
         self._last_position: float | None = None
         self._last_sync_at: float | None = None
@@ -84,7 +83,6 @@ class SubtitlePlayer:
     def restart(self, position: float) -> None:
         self.stop(join_timeout=0.75)
         with self._lock:
-            self._byte_buffer = b""
             self._cues = ()
             self._error = None
             self._timeline_offset = 0.0
@@ -127,13 +125,10 @@ class SubtitlePlayer:
         with self._lock:
             if generation != self._generation:
                 return
-            self._byte_buffer += payload
-            # Decode the complete accumulated byte stream so an HTTP chunk
-            # boundary cannot corrupt a multi-byte UTF-8 character.
-            text = self._byte_buffer.decode("utf-8", errors="replace")
-            # Subtitle streams are tiny compared with media. Keeping the
-            # accumulated text lets ASS fragments without repeated headers be
-            # parsed correctly and still remains bounded for normal titles.
+            # Every PMS /subtitles response is a self-contained timed-text
+            # document (typically ASS with its own headers). Parse it
+            # independently, then merge its cues into the persistent timeline.
+            text = payload.decode("utf-8", errors="replace")
             parsed = parse_timed_text(text)
 
             # PMS subtitle timestamps can be relative to the requested
@@ -162,7 +157,7 @@ class SubtitlePlayer:
                 )
 
             if self._timeline_offset:
-                self._cues = tuple(
+                normalized = tuple(
                     Cue(
                         start=cue.start + self._timeline_offset,
                         end=cue.end + self._timeline_offset,
@@ -171,7 +166,9 @@ class SubtitlePlayer:
                     for cue in parsed
                 )
             else:
-                self._cues = parsed
+                normalized = parsed
+
+            self._cues = merge_cues(self._cues, normalized)
 
             if self._cues:
                 logger.info(
