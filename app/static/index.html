@@ -951,7 +951,7 @@
 
     el("current").textContent = data.current?.text || "…";
     el("next").textContent = data.next?.text || "";
-    el("status").textContent = "✓ Synchronized";
+    el("status").textContent = data.subtitle_error || "✓ Synchronized";
   }
 
   function enqueueForDelayedRender(data) {
