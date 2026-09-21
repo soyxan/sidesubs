@@ -22,7 +22,7 @@ class SubtitlePlayer:
     playback position and restarts the stream only after a seek or stream end.
     """
 
-    SEEK_THRESHOLD_SECONDS = 3.0
+    SEEK_THRESHOLD_SECONDS = 12.0
     START_PREROLL_SECONDS = 2.0
 
     def __init__(self, stream_runner: StreamRunner):
