@@ -58,9 +58,19 @@
     #sessionButton { width: min(26vw, 125px); max-width: 125px; }
     #subtitleButton { width: min(28vw, 145px); max-width: 145px; }
     #sessionButton:disabled, #subtitleButton:disabled { opacity: .42; cursor: default; }
-    #cinemaButton { width: 34px; padding: 0 !important; display: grid; place-items: center; }
-    #cinemaButton svg { width: 18px; height: 18px; display: block; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-    #delayValue { min-width: 40px; text-align: center; font-size: 12px; opacity: .78; }
+    #cinemaButton, #delayButton { width: 34px; padding: 0 !important; display: grid; place-items: center; }
+    #cinemaButton svg, #delayButton svg { width: 18px; height: 18px; display: block; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    #delayPill {
+      position: fixed; left: 50%; bottom: calc(max(10px, env(safe-area-inset-bottom)) + 48px); transform: translateX(-50%) translateY(6px) scale(.96);
+      z-index: 21; display: flex; align-items: center; gap: 4px; padding: 4px;
+      border: 1px solid rgba(255,255,255,.15); border-radius: 999px; background: rgba(18,18,18,.88);
+      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      opacity: 0; pointer-events: none; transition: opacity .18s ease, transform .18s ease;
+    }
+    #delayPill.show { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); pointer-events: auto; }
+    #delayPill button { border: 0; background: transparent; color: #fff; border-radius: 999px; width: 36px; height: 34px; font: inherit; font-size: 18px; }
+    #delayPill button:active { background: rgba(255,255,255,.14); }
+    #delayPillValue { min-width: 54px; text-align: center; font-size: 13px; font-variant-numeric: tabular-nums; opacity: .9; }
     .divider { width: 1px; height: 18px; background: rgba(255,255,255,.14); flex: 0 0 auto; }
 
     @media (orientation: landscape) {
@@ -92,13 +102,13 @@
     #settingsPanel h2 { margin: 0 0 8px; font-size: 20px; }
     #settingsPanel p { margin: 0 0 18px; font-size: 13px; line-height: 1.4; opacity: .6; }
     #settingsPanel label { display: block; margin-bottom: 7px; font-size: 13px; opacity: .8; }
-    #preferredLanguageButton, #subtitleSizeButton {
+    #preferredLanguageButton, #subtitleSizeButton, #subtitleDelayButton {
       width: 100%; min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
       border: 1px solid rgba(255,255,255,.14); border-radius: 10px;
       padding: 0 12px; background: #080808; color: #fff; font: inherit; text-align: left;
     }
-    #preferredLanguageButton .selectorChevron, #subtitleSizeButton .selectorChevron { opacity: .5; font-size: 18px; }
-    #subtitleAppearanceBlock { margin-top: 18px; }
+    #preferredLanguageButton .selectorChevron, #subtitleSizeButton .selectorChevron, #subtitleDelayButton .selectorChevron { opacity: .5; font-size: 18px; }
+    #subtitleAppearanceBlock, #subtitleDelayBlock { margin-top: 18px; }
     .subtitleSizePreview { display: block; line-height: 1.1; font-weight: 700; padding: 2px 0; }
     #appSettingsBlock {
       margin-top: 22px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,.10);
@@ -167,6 +177,13 @@
         <span class="selectorChevron">›</span>
       </button>
     </div>
+    <div id="subtitleDelayBlock">
+      <label for="subtitleDelayButton">Subtitle delay</label>
+      <button id="subtitleDelayButton" type="button">
+        <span id="subtitleDelayLabel">1.0 s</span>
+        <span class="selectorChevron">›</span>
+      </button>
+    </div>
     <div id="appSettingsBlock">
       <div id="appSettingsTitle">SideSubs for Android</div>
       <div id="appSettingsHint">Use the SideSubs Android app for native app settings and Cinema mode.</div>
@@ -211,6 +228,12 @@
   <div id="next"></div>
 </main>
 
+<div id="delayPill" aria-hidden="true">
+  <button id="delayPillMinus" type="button" title="Decrease delay" aria-label="Decrease delay">−</button>
+  <span id="delayPillValue">1.0 s</span>
+  <button id="delayPillPlus" type="button" title="Increase delay" aria-label="Increase delay">+</button>
+</div>
+
 <div id="controls">
   <button id="sessionButton" type="button" title="Plex session">📺 Session…</button>
   <div class="divider"></div>
@@ -219,9 +242,7 @@
   <button id="settingsButton" type="button" title="Settings">⚙</button>
   <button id="cinemaButton" type="button" title="Enter fullscreen" aria-label="Enter fullscreen"></button>
   <div class="divider"></div>
-  <button id="delayMinus" type="button" title="Decrease delay">−</button>
-  <span id="delayValue">1.0 s</span>
-  <button id="delayPlus" type="button" title="Increase delay">+</button>
+  <button id="delayButton" type="button" title="Subtitle delay" aria-label="Subtitle delay"></button>
 </div>
 
 <script>
@@ -242,6 +263,8 @@
   let settingsLanguageDraft = preferredLanguage;
   let subtitleSize = localStorage.getItem("subtitleSize") || "medium";
   let settingsSubtitleSizeDraft = subtitleSize;
+  let settingsDelayDraft = subtitleDelayMs;
+  let delayPillOpen = false;
 
   const subtitleSizes = [
     { id: "very-small", label: "Very small", previewPx: 18, current: "clamp(28px, 6.5vw, 56px)", next: "clamp(16px, 3.6vw, 26px)", cinemaCurrent: "clamp(26px, 4.4vw, 50px)", cinemaNext: "clamp(14px, 2.6vw, 23px)" },
@@ -285,17 +308,32 @@
     return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   }
 
-  function updateDelayLabel() {
-    el("delayValue").textContent = `${(subtitleDelayMs / 1000).toFixed(1)} s`;
+  function formatDelay(value) {
+    return `${(value / 1000).toFixed(2).replace(/0$/, "")} s`;
   }
 
-  function setDelay(value) {
+  function updateDelayLabel() {
+    const label = formatDelay(subtitleDelayMs);
+    el("delayPillValue").textContent = label;
+    el("subtitleDelayLabel").textContent = formatDelay(settingsDelayDraft);
+  }
+
+  function setDelay(value, showNotice = false) {
     subtitleDelayMs = Math.max(0, Math.min(5000, value));
+    settingsDelayDraft = subtitleDelayMs;
     localStorage.setItem("subtitleDelayMs", String(subtitleDelayMs));
     delayedQueue = [];
     updateDelayLabel();
-    notice(`Delay: ${(subtitleDelayMs / 1000).toFixed(1)} s`);
+    if (showNotice) notice(`Delay: ${formatDelay(subtitleDelayMs)}`);
     showControls();
+  }
+
+  function setDelayPillOpen(open) {
+    delayPillOpen = open;
+    el("delayPill").classList.toggle("show", open);
+    el("delayPill").setAttribute("aria-hidden", open ? "false" : "true");
+    el("delayButton").setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) showControls();
   }
 
   function setSelectedPlayer(playerId) {
@@ -368,6 +406,7 @@
     if (!cinemaEnabled) return;
 
     controlsTimer = window.setTimeout(() => {
+      setDelayPillOpen(false);
       el("controls").classList.add("hidden-controls");
       updateStatusBarVisibility(false);
     }, 2800);
@@ -404,6 +443,51 @@
       primary.style.fontSize = option.previewPx + "px";
       list.appendChild(button);
     }
+    el("choiceBackdrop").classList.add("show");
+    window.clearTimeout(controlsTimer);
+  }
+
+  function openSubtitleDelayModal() {
+    const list = el("choiceList");
+    list.replaceChildren();
+    el("choiceTitle").textContent = "Subtitle delay";
+
+    const wrapper = document.createElement("div");
+    wrapper.style.display = "flex";
+    wrapper.style.alignItems = "center";
+    wrapper.style.justifyContent = "center";
+    wrapper.style.gap = "14px";
+    wrapper.style.padding = "18px 6px";
+
+    const minus = document.createElement("button");
+    minus.type = "button";
+    minus.className = "choiceItem";
+    minus.style.width = "64px";
+    minus.style.textAlign = "center";
+    minus.style.fontSize = "22px";
+    minus.textContent = "−";
+
+    const value = document.createElement("div");
+    value.style.minWidth = "88px";
+    value.style.textAlign = "center";
+    value.style.fontSize = "20px";
+    value.style.fontWeight = "700";
+    value.style.fontVariantNumeric = "tabular-nums";
+    value.textContent = formatDelay(settingsDelayDraft);
+
+    const plus = minus.cloneNode(true);
+    plus.textContent = "+";
+
+    const adjust = delta => {
+      settingsDelayDraft = Math.max(0, Math.min(5000, settingsDelayDraft + delta));
+      value.textContent = formatDelay(settingsDelayDraft);
+      el("subtitleDelayLabel").textContent = formatDelay(settingsDelayDraft);
+    };
+    minus.addEventListener("click", () => adjust(-250));
+    plus.addEventListener("click", () => adjust(250));
+
+    wrapper.append(minus, value, plus);
+    list.appendChild(wrapper);
     el("choiceBackdrop").classList.add("show");
     window.clearTimeout(controlsTimer);
   }
@@ -465,8 +549,10 @@
   function openSettings() {
     settingsLanguageDraft = preferredLanguage;
     settingsSubtitleSizeDraft = subtitleSize;
+    settingsDelayDraft = subtitleDelayMs;
     updatePreferredLanguageButton();
     updateSubtitleSizeButton();
+    updateDelayLabel();
     const nativeApp = isNativeAndroid();
     el("appSettingsTitle").textContent = nativeApp ? "Android app" : "SideSubs for Android";
     el("appSettingsHint").textContent = nativeApp
@@ -480,7 +566,9 @@
 
   function closeSettings() {
     settingsSubtitleSizeDraft = subtitleSize;
+    settingsDelayDraft = subtitleDelayMs;
     applySubtitleSize(subtitleSize);
+    updateDelayLabel();
     el("settingsBackdrop").classList.remove("show");
     showControls();
   }
@@ -642,6 +730,7 @@
     button.textContent = `📺 ${client}`;
   }
 
+  const delayIcon = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>`;
   const fullscreenIcon = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M21 16v5h-5M8 21H3v-5"/></svg>`;
   const exitFullscreenIcon = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8H3V3M16 8h5V3M16 16h5v5M8 16H3v5"/></svg>`;
 
@@ -742,6 +831,10 @@
     event.stopPropagation();
     openSubtitleSizeModal();
   });
+  el("subtitleDelayButton").addEventListener("click", event => {
+    event.stopPropagation();
+    openSubtitleDelayModal();
+  });
   el("appSettingsButton").addEventListener("click", () => {
     closeSettings();
     if (isNativeAndroid()) {
@@ -753,9 +846,12 @@
   el("settingsSave").addEventListener("click", () => {
     preferredLanguage = settingsLanguageDraft;
     subtitleSize = settingsSubtitleSizeDraft;
+    subtitleDelayMs = Math.max(0, Math.min(5000, settingsDelayDraft));
     localStorage.setItem("preferredSubtitleLanguage", preferredLanguage);
     localStorage.setItem("subtitleSize", subtitleSize);
+    localStorage.setItem("subtitleDelayMs", String(subtitleDelayMs));
     applySubtitleSize(subtitleSize);
+    updateDelayLabel();
     delayedQueue = [];
     closeSettings();
     notice("Subtitle size: " + subtitleSizeOption(subtitleSize).label);
@@ -769,11 +865,17 @@
     if (cinemaEnabled) await exitCinemaMode();
     else await enterCinemaMode();
   });
-  el("delayMinus").addEventListener("click", event => {
+  el("delayButton").innerHTML = delayIcon;
+  el("delayButton").setAttribute("aria-expanded", "false");
+  el("delayButton").addEventListener("click", event => {
+    event.stopPropagation();
+    setDelayPillOpen(!delayPillOpen);
+  });
+  el("delayPillMinus").addEventListener("click", event => {
     event.stopPropagation();
     setDelay(subtitleDelayMs - 250);
   });
-  el("delayPlus").addEventListener("click", event => {
+  el("delayPillPlus").addEventListener("click", event => {
     event.stopPropagation();
     setDelay(subtitleDelayMs + 250);
   });
@@ -790,7 +892,10 @@
     if (event.target === el("choiceBackdrop")) closeChoiceModal();
   });
 
-  document.addEventListener("pointerdown", showControls, { passive: true });
+  document.addEventListener("pointerdown", event => {
+    if (delayPillOpen && !el("delayPill").contains(event.target) && event.target !== el("delayButton")) setDelayPillOpen(false);
+    showControls();
+  }, { passive: true });
   document.addEventListener("visibilitychange", async () => {
     if (!isNativeAndroid() && cinemaEnabled && document.visibilityState === "visible" && !wakeLock) {
       await requestWakeLock();
