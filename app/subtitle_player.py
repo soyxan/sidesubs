@@ -38,6 +38,8 @@ class SubtitlePlayer:
         self._last_state = "unknown"
         self._error: str | None = None
         self._started_at = 0.0
+        self._timeline_offset = 0.0
+        self._timeline_mode_logged = False
         self._last_used_at = time.monotonic()
 
     @property
@@ -85,6 +87,8 @@ class SubtitlePlayer:
             self._byte_buffer = b""
             self._cues = ()
             self._error = None
+            self._timeline_offset = 0.0
+            self._timeline_mode_logged = False
             self._start_locked(position)
 
     def _start_locked(self, position: float) -> None:
@@ -130,7 +134,54 @@ class SubtitlePlayer:
             # Subtitle streams are tiny compared with media. Keeping the
             # accumulated text lets ASS fragments without repeated headers be
             # parsed correctly and still remains bounded for normal titles.
-            self._cues = parse_timed_text(text)
+            parsed = parse_timed_text(text)
+
+            # PMS subtitle timestamps can be relative to the requested
+            # transcode offset even when copyts=1. Detect that coordinate
+            # system from the first useful cues and normalize everything to
+            # the absolute Plex playback timeline.
+            if parsed and not self._timeline_mode_logged:
+                first = parsed[0]
+                last = parsed[-1]
+                if self._started_at >= 5.0 and last.end < self._started_at - 2.0:
+                    self._timeline_offset = self._started_at
+                    mode = "relative"
+                else:
+                    self._timeline_offset = 0.0
+                    mode = "absolute"
+                self._timeline_mode_logged = True
+                logger.info(
+                    "Subtitle timeline mode=%s requested_offset=%.3f raw_first=%.3f-%.3f raw_last=%.3f-%.3f cues=%s",
+                    mode,
+                    self._started_at,
+                    first.start,
+                    first.end,
+                    last.start,
+                    last.end,
+                    len(parsed),
+                )
+
+            if self._timeline_offset:
+                self._cues = tuple(
+                    Cue(
+                        start=cue.start + self._timeline_offset,
+                        end=cue.end + self._timeline_offset,
+                        text=cue.text,
+                    )
+                    for cue in parsed
+                )
+            else:
+                self._cues = parsed
+
+            if self._cues:
+                logger.info(
+                    "Subtitle buffer cues=%s first=%.3f-%.3f last=%.3f-%.3f",
+                    len(self._cues),
+                    self._cues[0].start,
+                    self._cues[0].end,
+                    self._cues[-1].start,
+                    self._cues[-1].end,
+                )
             self._error = None
 
     def _run(self, generation: int, start_position: float, stop_event: threading.Event) -> None:
