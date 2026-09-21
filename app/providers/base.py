@@ -8,8 +8,9 @@ from app.domain import Cue, PlaybackSession, SubtitleTrack
 class MediaProvider(ABC):
     """Provider boundary used by SideSubs.
 
-    Plex, Emby and Jellyfin adapters should translate their native APIs into
-    these provider-neutral models. UI/session/subtitle logic stays outside.
+    Plex, Emby and Jellyfin adapters translate their native APIs into these
+    provider-neutral models. Session selection, cue timing and UI stay outside
+    the provider implementation.
     """
 
     name: str
@@ -23,13 +24,13 @@ class MediaProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def load_subtitle_window(
+    def subtitle_cues(
         self,
         session: PlaybackSession,
         track: SubtitleTrack,
         position: float,
     ) -> tuple[Cue, ...]:
-        """Return enough nearby cues to resolve current + next subtitle."""
+        """Synchronize a subtitle player and return buffered timed-text cues."""
         raise NotImplementedError
 
     @abstractmethod
