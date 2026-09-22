@@ -17,6 +17,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.TextUtils
 import android.transition.AutoTransition
 import android.transition.TransitionManager
 import android.view.Gravity
@@ -320,8 +321,14 @@ class MainActivity : Activity() {
             setPadding(dp(8), 0, dp(8), 0)
         }
 
-        sessionButton = controlButton("Session", R.drawable.ic_tv)
-        subtitleButton = controlButton("Subtitles", R.drawable.ic_subtitles)
+        sessionButton = controlButton("Session", R.drawable.ic_tv).apply {
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        subtitleButton = controlButton("Subtitles", R.drawable.ic_subtitles).apply {
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            ellipsize = TextUtils.TruncateAt.END
+        }
         delayButton = controlButton("", R.drawable.ic_schedule, "Subtitle delay")
         settingsButton = controlButton("", R.drawable.ic_settings, "Settings")
         cinemaButton = controlButton("", R.drawable.ic_fullscreen, "Cinema mode")
@@ -334,8 +341,8 @@ class MainActivity : Activity() {
         settingsButton.setOnClickListener { showSettings() }
         cinemaButton.setOnClickListener { setCinemaMode(!cinemaMode) }
 
-        addControl(sessionButton, 1.5f)
-        addControl(subtitleButton, 1.6f)
+        addControl(sessionButton, 1.15f)
+        addControl(subtitleButton, 2.05f)
         addControl(delayButton, 0.55f)
         addControl(settingsButton, 0.55f)
         addControl(cinemaButton, 0.55f)
@@ -793,11 +800,11 @@ class MainActivity : Activity() {
 
         titleView.text = session.title
         stateView.text = "${session.displayClient()} · ${formatPlaybackTime(position)} · ${session.state}"
-        sessionButton.text = ellipsize(session.displayClient(), 13)
+        sessionButton.text = ellipsize(session.displayClient(), 16)
         subtitleButton.text = if (track == null) {
             "No ${preferredLanguage().uppercase(Locale.US)}"
         } else {
-            ellipsize(track.label(), 17)
+            ellipsize(track.label(), 32)
         }
         subtitleButton.isEnabled = tracks.isNotEmpty()
 
