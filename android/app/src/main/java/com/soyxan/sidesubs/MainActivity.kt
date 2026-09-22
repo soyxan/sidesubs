@@ -471,7 +471,7 @@ class MainActivity : Activity() {
 
     private fun trackPreferenceKey(mediaId: String): String {
         val provider = mediaProvider?.providerType?.name ?: "UNKNOWN"
-        return "track_$provider_$mediaId"
+        return "track_${provider}_$mediaId"
     }
 
     private fun applyPlaybackState(
