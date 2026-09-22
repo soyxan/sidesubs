@@ -278,11 +278,11 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
         }
 
-        sessionButton = controlButton("📺 Session")
-        subtitleButton = controlButton("💬 Subtitles")
-        delayButton = controlButton("◷")
-        settingsButton = controlButton("⚙")
-        cinemaButton = controlButton("⛶")
+        sessionButton = controlButton("Session", R.drawable.ic_tv)
+        subtitleButton = controlButton("Subtitles", R.drawable.ic_subtitles)
+        delayButton = controlButton("", R.drawable.ic_schedule, "Subtitle delay")
+        settingsButton = controlButton("", R.drawable.ic_settings, "Settings")
+        cinemaButton = controlButton("", R.drawable.ic_fullscreen, "Cinema mode")
 
         sessionButton.setOnClickListener { showSessionChooser() }
         subtitleButton.setOnClickListener { showSubtitleChooser() }
@@ -636,7 +636,7 @@ class MainActivity : Activity() {
                         stateView.text = "No active ${provider.providerType.displayName} session · ${provider.serverName}"
                         currentSubtitleView.text = ""
                         nextSubtitleView.text = ""
-                        sessionButton.text = "📺 Session"
+                        sessionButton.text = "Session"
                     }
                     return@execute
                 }
@@ -749,11 +749,11 @@ class MainActivity : Activity() {
 
         titleView.text = session.title
         stateView.text = "${session.displayClient()} · ${formatPlaybackTime(position)} · ${session.state}"
-        sessionButton.text = "📺 ${ellipsize(session.displayClient(), 13)}"
+        sessionButton.text = ellipsize(session.displayClient(), 13)
         subtitleButton.text = if (track == null) {
-            "💬 No ${preferredLanguage().uppercase(Locale.US)}"
+            "No ${preferredLanguage().uppercase(Locale.US)}"
         } else {
-            "💬 ${ellipsize(track.label(), 17)}"
+            ellipsize(track.label(), 17)
         }
         subtitleButton.isEnabled = tracks.isNotEmpty()
 
@@ -904,7 +904,7 @@ class MainActivity : Activity() {
 
     private fun updateDelayButton() {
         val delay = if (::preferences.isInitialized) preferences.getInt(KEY_DELAY_MS, 1000) else 1000
-        delayButton.text = String.format(Locale.US, "◷ %.1f", delay / 1000.0)
+        delayButton.text = String.format(Locale.US, "%.1f", delay / 1000.0)
     }
 
     private fun showSettings() {
@@ -1086,14 +1086,24 @@ class MainActivity : Activity() {
         LinearLayout.LayoutParams.WRAP_CONTENT,
     )
 
-    private fun controlButton(label: String) = Button(this).apply {
+    private fun controlButton(
+        label: String,
+        iconRes: Int = 0,
+        description: String? = null,
+    ) = Button(this).apply {
         text = label
+        contentDescription = description ?: label
         setTextColor(Color.WHITE)
         textSize = 12f
         isAllCaps = false
         isSingleLine = true
         setBackgroundColor(Color.TRANSPARENT)
         setPadding(dp(5), 0, dp(5), 0)
+        compoundDrawablePadding = if (label.isBlank()) 0 else dp(6)
+        if (iconRes != 0) {
+            setCompoundDrawablesRelativeWithIntrinsicBounds(iconRes, 0, 0, 0)
+            compoundDrawableTintList = textColors
+        }
     }
 
     private fun addControl(button: Button, weight: Float) {
