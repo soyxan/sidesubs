@@ -683,7 +683,7 @@ class MainActivity : Activity() {
         loadedMediaId = session.mediaId
 
         titleView.text = session.title
-        stateView.text = "${session.displayClient()} · ${session.state}"
+        stateView.text = "${session.displayClient()} · ${formatPlaybackTime(position)} · ${session.state}"
         sessionButton.text = "📺 ${ellipsize(session.displayClient(), 13)}"
         subtitleButton.text = if (track == null) {
             "💬 No ${preferredLanguage().uppercase(Locale.US)}"
@@ -1180,6 +1180,17 @@ class MainActivity : Activity() {
         return if (message.isBlank()) error.javaClass.simpleName else message.take(100).let {
             if (message.length > 100) "$it…" else it
         }
+    }
+
+    private fun formatPlaybackTime(position: Double): String {
+        val seconds = position.toLong().coerceAtLeast(0L)
+        return String.format(
+            Locale.US,
+            "%d:%02d:%02d",
+            seconds / 3600,
+            (seconds / 60) % 60,
+            seconds % 60,
+        )
     }
 
     private fun ellipsize(value: String, max: Int): String =
