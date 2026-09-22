@@ -38,7 +38,7 @@ provider interface
        +-- JellyfinProvider   (future)
 ```
 
-The provider boundary exposes playback sessions, subtitle tracks and a provider-neutral subtitle player. Synchronization, language selection, delay, cue rendering and the HTTP API are independent of Plex-specific objects.
+The provider boundary exposes playback sessions, subtitle tracks and complete timed-text cue timelines. Synchronization, language selection, delay, cue rendering and the HTTP API are independent of Plex-specific objects.
 
 Only Plex is implemented today. `MEDIA_PROVIDER=plex` is therefore the only supported provider value, but the separation is intentional so a future Emby or Jellyfin adapter does not require rewriting the SideSubs UI or subtitle-selection logic.
 
@@ -119,8 +119,8 @@ http://YOUR-SERVER-IP:8085
 5. SideSubs discovers subtitle streams from Plex metadata rather than inspecting the media file itself.
 6. SideSubs chooses a compatible track using the preferred language unless a specific track has been selected for that title.
 7. External text subtitles are fetched directly from Plex when a stream key is available.
-8. Embedded text subtitles are managed by a persistent background `SubtitlePlayer`. It buffers timed-text cues in memory while opening and, when PMS stalls, recycling short-lived Plex transcode transports behind the scenes.
-9. The backend smooths Plex playback-position updates and uses that clock to choose the current and next cue from the in-memory timeline. A confirmed seek resets the subtitle timeline near the new position; ordinary transport recycling and pause/resume keep the buffered timeline.
+8. Embedded text subtitles are fetched once as a complete subtitle file through Plex HTTP subtitle transcoding, parsed into timed cues and cached in memory per title/track.
+9. The backend smooths Plex playback-position updates and uses that clock to choose the current and next cue from the cached timeline. Seeks require no subtitle reload because the complete timeline is already available.
 10. The client renders the synchronized current and next subtitle. The configured delay is applied to the subtitle playback clock, without delaying API responses or changing Plex playback.
 
 If the selected Plex session disappears, SideSubs does **not** silently switch to another player. The UI indicates that the selected session is no longer available.
@@ -139,11 +139,11 @@ External subtitle tracks exposed by Plex are fetched through Plex itself. SideSu
 
 ### Embedded subtitles
 
-Embedded text subtitle streams are identified from Plex metadata. SideSubs keeps one persistent logical subtitle player for the selected title/track and parses ASS/SRT/WebVTT-compatible payloads into an in-memory cue timeline. PMS transcode transports may be recycled transparently if Plex stops advancing a subtitle response.
+Embedded text subtitle streams are identified from Plex metadata. SideSubs asks PMS for the complete selected subtitle through the HTTP universal subtitle-transcode flow, parses the returned ASS/SRT/WebVTT-compatible document into one in-memory cue timeline and caches it for the title/track.
 
 Supported text codecs include SRT/SubRip, ASS/SSA, WebVTT and mov_text. Image-based subtitle formats such as PGS may appear in the selector as unsupported, but SideSubs does not currently render them as text.
 
-Plex versions differ in whether `subtitleStreamID` is honored directly in a universal-transcode request. The Plex adapter briefly selects the requested stream on the Plex Part while establishing each SideSubs subtitle transport, then restores the previous selection immediately after the first payload. The logical SideSubs subtitle player remains independent and preserves its buffered timeline across transport recycling.
+For embedded tracks, the Plex adapter briefly selects the requested stream on the Plex Part, establishes the transcode decision, fetches the complete subtitle file with `protocol=http`, and immediately restores the previous Plex subtitle selection. Subsequent status polls use only the cached cue timeline; Plex is not repeatedly asked for subtitle segments during playback.
 
 ## Interface
 
