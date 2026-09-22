@@ -805,10 +805,10 @@ class MainActivity : Activity() {
         titleView.text = session.title
         stateView.text = "${session.displayClient()} · ${formatPlaybackTime(position)} · ${session.state}"
         sessionButton.text = session.displayClient()
-        subtitleButton.text = if (track == null) {
-            "No ${preferredLanguage().uppercase(Locale.US)}"
-        } else {
-            track.label()
+        subtitleButton.text = when {
+            track != null -> track.label()
+            tracks.isEmpty() -> "No subtitles"
+            else -> "Choose subtitles"
         }
         subtitleButton.isEnabled = tracks.isNotEmpty()
 
