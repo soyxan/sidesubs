@@ -297,13 +297,54 @@ class PlexAuthManager(
         return Identity(clientId, kid, keyPair.privateKey, keyPair.publicKey)
     }
 
-    private fun bestConnection(server: PlexServerResource): PlexServerConnection =
-        server.connections.minWithOrNull(
+    private fun bestConnection(server: PlexServerResource): PlexServerConnection {
+        val savedUrl = if (preferences.getString(KEY_SERVER_ID, "") == server.id) {
+            preferences.getString(KEY_SERVER_URL, "").orEmpty()
+        } else {
+            ""
+        }
+        val candidates = server.connections.sortedWith(
             compareBy<PlexServerConnection>(
-                { if (it.local && !it.relay) 0 else if (!it.relay) 1 else 2 },
-                { if (it.uri.startsWith("https://")) 0 else 1 },
+                { if (it.uri == savedUrl) -1 else if (it.local && !it.relay) 0 else if (!it.relay) 1 else 2 },
+                { if (it.uri.startsWith("https://", ignoreCase = true)) 0 else 1 },
             )
-        ) ?: error("Plex server has no usable connection")
+        )
+
+        var rejectedToken = false
+        for (candidate in candidates) {
+            val status = runCatching { probeSessions(candidate.uri, server.accessToken) }.getOrNull()
+            if (status == 200) return candidate
+            if (status == 401 || status == 403) rejectedToken = true
+        }
+        if (rejectedToken) error("The Plex server rejected the discovered authorization.")
+        error("None of the connections advertised by this Plex server can be reached.")
+    }
+
+    private fun probeSessions(baseUrl: String, token: String): Int {
+        val connection = URL("${baseUrl.trimEnd('/')}/status/sessions")
+            .openConnection() as HttpURLConnection
+        try {
+            connection.connectTimeout = 2_500
+            connection.readTimeout = 3_500
+            connection.useCaches = false
+            connection.setRequestProperty("Accept", "application/json")
+            connection.setRequestProperty("X-Plex-Token", token)
+            connection.setRequestProperty("X-Plex-Client-Identifier", clientIdentifier)
+            connection.setRequestProperty("X-Plex-Product", PRODUCT)
+            val status = connection.responseCode
+            if (status != 200) return status
+
+            // Check the same authenticated endpoint that PlexClient will use.
+            val payload = readFully(connection.inputStream)
+            return if (JSONObject(payload.toString(StandardCharsets.UTF_8)).has("MediaContainer")) {
+                200
+            } else {
+                502
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }
 
     private fun jwtExpiration(token: String): Long? = runCatching {
         val parts = token.split('.')
