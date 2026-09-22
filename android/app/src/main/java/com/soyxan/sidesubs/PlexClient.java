@@ -193,7 +193,7 @@ final class PlexClient {
                 "/subtitles/:/transcode/universal/start",
                 subtitle,
                 SUBTITLE_TIMEOUT_MS,
-                "*/*",
+                "application/json",
                 playbackSession
             );
             List<Cue> cues = SubtitleParser.parse(new String(payload, StandardCharsets.UTF_8));
@@ -315,12 +315,19 @@ final class PlexClient {
         connection.setRequestProperty("X-Plex-Client-Identifier", clientIdentifier);
         connection.setRequestProperty("X-Plex-Product", "SideSubs");
         connection.setRequestProperty("X-Plex-Version", "1");
-        connection.setRequestProperty("X-Plex-Platform", "Android");
-        connection.setRequestProperty("X-Plex-Device", "SideSubs");
-        connection.setRequestProperty("Accept", accept);
         if (playbackSessionId != null) {
+            // PMS universal subtitle transcoding is profile-sensitive. Match
+            // the same Plex Web client profile used by the Docker provider,
+            // which is known to return the complete embedded subtitle file.
+            connection.setRequestProperty("X-Plex-Platform", "Chrome");
+            connection.setRequestProperty("X-Plex-Device", "SideSubs");
+            connection.setRequestProperty("X-Plex-Client-Profile-Name", "Web");
             connection.setRequestProperty("X-Plex-Session-Identifier", playbackSessionId);
+        } else {
+            connection.setRequestProperty("X-Plex-Platform", "Android");
+            connection.setRequestProperty("X-Plex-Device", "SideSubs");
         }
+        connection.setRequestProperty("Accept", accept);
 
         int status = connection.getResponseCode();
         InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
