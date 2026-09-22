@@ -17,6 +17,7 @@ class PlexClient(
     token: String,
     private val clientIdentifier: String,
     override val serverName: String,
+    private val diagnostics: DiagnosticLog,
 ) : MediaProvider {
     override val providerType = MediaProviderType.PLEX
     val serverUrl: String = normalizeBaseUrl(baseUrl)
@@ -84,19 +85,29 @@ class PlexClient(
     override fun subtitleTimeline(mediaId: String, track: SubtitleTrack): SubtitleTimeline {
         val cacheKey = "$mediaId:${track.id}"
         synchronized(subtitleCache) {
-            subtitleCache[cacheKey]?.let { return it }
+            subtitleCache[cacheKey]?.let {
+                diagnostics.add("Subtitle cache hit: media=$mediaId source=${track.source} cues=${it.cues.size}")
+                return it
+            }
         }
 
-        val timeline = if (track.source == "external" && track.providerData["key"].orEmpty().isNotBlank()) {
-            fetchExternal(track)
-        } else {
-            fetchEmbedded(mediaId, track)
+        val started = System.currentTimeMillis()
+        diagnostics.add("Subtitle load started: media=$mediaId source=${track.source} language=${track.language} codec=${track.codec}")
+        try {
+            val timeline = if (track.source == "external" && track.providerData["key"].orEmpty().isNotBlank()) {
+                fetchExternal(track)
+            } else {
+                fetchEmbedded(mediaId, track)
+            }
+            synchronized(subtitleCache) {
+                subtitleCache[cacheKey] = timeline
+            }
+            diagnostics.add("Subtitle ready: media=$mediaId cues=${timeline.cues.size} elapsedMs=${System.currentTimeMillis() - started}")
+            return timeline
+        } catch (error: Exception) {
+            diagnostics.add("Subtitle load failed: media=$mediaId reason=${failureKind(error)}")
+            throw error
         }
-
-        synchronized(subtitleCache) {
-            subtitleCache[cacheKey] = timeline
-        }
-        return timeline
     }
 
     override fun clearSubtitleCache() = synchronized(subtitleCache) {
@@ -111,6 +122,7 @@ class PlexClient(
             readTimeoutMs = READ_TIMEOUT_MS,
             accept = "*/*",
         )
+        diagnostics.add("External subtitle downloaded: bytes=${payload.size}")
         val cues = SubtitleParser.parse(payload.toString(StandardCharsets.UTF_8))
         check(cues.isNotEmpty()) { "Plex returned an empty subtitle" }
         return SubtitleTimeline(cues)
@@ -151,9 +163,13 @@ class PlexClient(
         )
 
         val changedSelection = oldStreamId != streamId
-        if (changedSelection) selectSubtitle(partId, streamId)
+        if (changedSelection) {
+            diagnostics.add("Selecting embedded subtitle track temporarily")
+            selectSubtitle(partId, streamId)
+        }
 
         try {
+            diagnostics.add("Requesting Plex subtitle transcode decision")
             request(
                 method = "GET",
                 path = "/video/:/transcode/universal/decision",
@@ -162,6 +178,8 @@ class PlexClient(
                 accept = "application/json",
                 playbackSessionId = playbackSession,
             )
+            diagnostics.add("Plex subtitle transcode decision received")
+            diagnostics.add("Downloading complete embedded subtitle")
 
             val payload = request(
                 method = "GET",
@@ -176,11 +194,18 @@ class PlexClient(
                 playbackSessionId = playbackSession,
             )
 
+            diagnostics.add("Embedded subtitle downloaded: bytes=${payload.size}")
             val cues = SubtitleParser.parse(payload.toString(StandardCharsets.UTF_8))
             check(cues.isNotEmpty()) { "Plex returned a subtitle with no parseable cues" }
             return SubtitleTimeline(cues)
         } finally {
-            if (changedSelection) runCatching { selectSubtitle(partId, oldStreamId) }
+            if (changedSelection) {
+                val restored = runCatching { selectSubtitle(partId, oldStreamId) }
+                diagnostics.add(
+                    if (restored.isSuccess) "Original Plex subtitle track restored"
+                    else "Failed to restore original Plex subtitle track: ${failureKind(restored.exceptionOrNull()!!)}"
+                )
+            }
         }
     }
 
@@ -312,6 +337,10 @@ class PlexClient(
             }
         }
     }
+
+    private fun failureKind(error: Throwable): String =
+        Regex("Plex HTTP [0-9]{3}").find(error.message.orEmpty())?.value
+            ?: error.javaClass.simpleName
 
     private fun firstObject(obj: JSONObject, key: String): JSONObject? = when (val value = obj.opt(key)) {
         is JSONObject -> value
