@@ -78,6 +78,9 @@ class MainActivity : Activity() {
     private var selectedTrack: SubtitleTrack? = null
     private var timeline: SubtitleTimeline? = null
     private var loadedMediaId = ""
+    private var loggedSessionCount = -1
+    private var loggedSessionState = ""
+    private var loggedPollError = ""
 
     private val pollTask = object : Runnable {
         override fun run() {
@@ -517,10 +520,14 @@ class MainActivity : Activity() {
                 token = connection.accessToken,
                 clientIdentifier = connection.clientIdentifier,
                 serverName = connection.serverName,
+                diagnostics = diagnostics,
             )
         }
 
         mediaProvider = provider
+        loggedSessionCount = -1
+        loggedSessionState = ""
+        loggedPollError = ""
         diagnostics.add("Connected to Plex server using validated address")
         playbackClock.clear()
         clearLoadedSubtitle()
@@ -546,9 +553,22 @@ class MainActivity : Activity() {
         executor.execute {
             try {
                 val freshSessions = provider.sessions()
+                if (freshSessions.size != loggedSessionCount) {
+                    loggedSessionCount = freshSessions.size
+                    diagnostics.add("Playback sessions available: ${freshSessions.size}")
+                }
                 val session = chooseSession(freshSessions)
-
+                val sessionState = if (session == null) "none"
+                    else "${session.playerId}|${session.mediaId}|${session.state}"
+                if (sessionState != loggedSessionState) {
+                    loggedSessionState = sessionState
+                    diagnostics.add(
+                        if (session == null) "No active playback session"
+                        else "Playback session: media=${session.mediaId} state=${session.state}"
+                    )
+                }
                 if (session == null) {
+                    loggedPollError = ""
                     runOnUiThread {
                         sessions = freshSessions
                         selectedSession = null
@@ -575,6 +595,11 @@ class MainActivity : Activity() {
                 if (needsTimeline) {
                     freshTracks = provider.subtitleTracks(session.mediaId)
                     track = chooseTrack(session.mediaId, freshTracks)
+                    diagnostics.add(
+                        "Subtitle tracks: media=${session.mediaId} total=${freshTracks.size} " +
+                            "compatible=${freshTracks.count { it.compatible }} " +
+                            "chosen=${track?.language ?: "none"}"
+                    )
                     freshTimeline = track?.let { provider.subtitleTimeline(session.mediaId, it) }
                 } else {
                     val wantedTrackId = preferredTrackId(session.mediaId)
@@ -585,6 +610,7 @@ class MainActivity : Activity() {
                     }
                 }
 
+                loggedPollError = ""
                 runOnUiThread {
                     applyPlaybackState(
                         freshSessions,
@@ -596,6 +622,12 @@ class MainActivity : Activity() {
                     )
                 }
             } catch (error: Exception) {
+                val reason = Regex("Plex HTTP [0-9]{3}").find(error.message.orEmpty())?.value
+                    ?: error.javaClass.simpleName
+                if (reason != loggedPollError) {
+                    loggedPollError = reason
+                    diagnostics.add("Playback update failed: $reason")
+                }
                 runOnUiThread {
                     stateView.text = "${provider.providerType.displayName}: ${friendlyError(error)}"
                 }
@@ -697,6 +729,7 @@ class MainActivity : Activity() {
             .setTitle("Playback session")
             .setSingleChoiceItems(labels, checked) { dialog, which ->
                 val item = sessions[which]
+                diagnostics.add("Playback session selected: media=${item.mediaId} state=${item.state}")
                 preferences.edit().putString(KEY_PLAYER_ID, item.playerId).apply()
                 playbackClock.clear()
                 clearLoadedSubtitle()
@@ -727,6 +760,11 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this)
             .setTitle("Subtitle track")
             .setSingleChoiceItems(labels, checked) { dialog, which ->
+                diagnostics.add(
+                    if (which == 0) "Subtitle selection: automatic for media=${session.mediaId}"
+                    else "Subtitle selection: media=${session.mediaId} " +
+                        "language=${compatible[which - 1].language} source=${compatible[which - 1].source}"
+                )
                 preferences.edit().apply {
                     if (which == 0) remove(trackPreferenceKey(session.mediaId))
                     else putString(trackPreferenceKey(session.mediaId), compatible[which - 1].id)
@@ -854,6 +892,7 @@ class MainActivity : Activity() {
                     .lowercase(Locale.US)
                     .ifBlank { "es" }
                 preferences.edit().putString(KEY_LANGUAGE, language).apply()
+                diagnostics.add("Preferred subtitle language set: $language")
                 clearLoadedSubtitle()
                 dialog.dismiss()
                 pollOnce()
