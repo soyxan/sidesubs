@@ -58,8 +58,8 @@
     #sessionButton { width: min(26vw, 125px); max-width: 125px; }
     #subtitleButton { width: min(28vw, 145px); max-width: 145px; }
     #sessionButton:disabled, #subtitleButton:disabled { opacity: .42; cursor: default; }
-    #cinemaButton, #delayButton { width: 34px; padding: 0 !important; display: grid; place-items: center; }
-    #cinemaButton svg, #delayButton svg { width: 18px; height: 18px; display: block; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    #cinemaButton, #delayButton, #settingsButton { width: 34px; padding: 0 !important; display: grid; place-items: center; }
+    #cinemaButton svg, #delayButton svg, #settingsButton svg { width: 18px; height: 18px; display: block; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
     #delayPill {
       position: fixed; left: 50%; bottom: calc(max(10px, env(safe-area-inset-bottom)) + 48px); transform: translateX(-50%) translateY(6px) scale(.96);
       z-index: 21; display: flex; align-items: center; gap: 4px; padding: 4px;
@@ -240,7 +240,7 @@
   <button id="subtitleButton" type="button" title="Subtitle track" disabled>💬 Subtitles…</button>
   <div class="divider"></div>
   <button id="delayButton" type="button" title="Subtitle delay" aria-label="Subtitle delay"></button>
-  <button id="settingsButton" type="button" title="Settings">⚙</button>
+  <button id="settingsButton" type="button" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.12 2.12-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V20.3h-3v-.08a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.88.34l-.06.06-2.12-2.12.06-.06A1.7 1.7 0 0 0 7 15a1.7 1.7 0 0 0-1.56-1.03H5.3v-3h.14A1.7 1.7 0 0 0 7 9.94a1.7 1.7 0 0 0-.34-1.88L6.6 8l2.12-2.12.06.06a1.7 1.7 0 0 0 1.88.34A1.7 1.7 0 0 0 11.69 4.7V4.6h3v.1a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06L19.8 8l-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.56 1.03h.14v3h-.14A1.7 1.7 0 0 0 19.4 15z"/></svg></button>
   <div class="divider"></div>
   <button id="cinemaButton" type="button" title="Enter fullscreen" aria-label="Enter fullscreen"></button>
 </div>
