@@ -50,3 +50,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 }
+
+
+dependencies {
+    implementation("com.google.crypto.tink:tink-android:1.23.0")
+}
