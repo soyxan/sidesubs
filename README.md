@@ -153,29 +153,30 @@ In normal portrait use, the status panel at the top and the controls at the bott
 
 In **Cinema mode**, the interface is optimized for landscape viewing. The status panel and controls automatically hide together and reappear when the screen is touched.
 
-## Android app
+## Android
 
-SideSubs includes a native standalone Android client in the `android/` directory.
+The native Android app is a standalone client and does not depend on the Docker service.
 
-The Android app does **not** require the Docker/web SideSubs server. It connects directly to Plex Media Server over HTTP, discovers active Plex sessions and subtitle tracks, fetches complete embedded text subtitles through Plex HTTP subtitle transcoding, caches the parsed cue timeline in memory, and synchronizes current/next subtitles from Plex playback position.
+Its Android architecture is provider-aware:
 
-On first launch, configure the Plex server URL and Plex token, for example:
+- `MediaProvider` defines the common playback/subtitle contract.
+- Plex is the first provider implementation.
+- Shared UI models use generic `mediaId` and provider-owned track metadata instead of Plex-specific identifiers.
+- The onboarding includes a media-server selector. Plex is currently the only available option; Jellyfin and Emby can be added as additional providers later without changing the playback UI.
 
-```text
-http://192.168.1.50:32400
-```
+### Plex sign-in
 
-The Android app stores its Plex connection settings, preferred subtitle language, selected player, per-title subtitle choice and delay locally on the device. Cinema mode keeps the screen awake and switches to immersive landscape viewing.
+SideSubs uses Plex's recommended JWT authentication flow for new applications:
 
-### Android releases
+1. SideSubs generates a per-device Ed25519 key pair.
+2. It creates a Plex PIN with the public JWK.
+3. The user signs in through the official Plex web authentication page.
+4. SideSubs polls the PIN and receives a short-lived Plex JWT.
+5. SideSubs queries Plex resources, lets the user choose a Plex Media Server when necessary, and stores the selected server.
+6. On later launches it refreshes authentication when required and reconnects to the selected server automatically.
 
-Signed Android APKs are published through GitHub Releases:
+The user does not need to find or paste a Plex token or server URL.
 
-https://github.com/soyxan/sidesubs/releases
-
-Version tags such as `v0.9.0` trigger the signed release workflow. The generated APK is cryptographically signed with the SideSubs release key so later versions can be installed as updates to the same application.
-
-Development changes under `android/` also trigger a separate debug APK build in GitHub Actions. Debug artifacts are intended for development and testing; GitHub Releases are the recommended source for installable public builds.
 
 ## Versioning
 
