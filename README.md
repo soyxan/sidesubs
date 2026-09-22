@@ -231,8 +231,7 @@ Backend:
 
 Android:
 
-- Native Java
-- Android WebView
+- Native Kotlin
 - Minimum SDK 26
 - Target SDK 36
 
