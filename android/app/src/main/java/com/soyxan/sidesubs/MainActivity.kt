@@ -453,6 +453,8 @@ class MainActivity : Activity() {
             .setTitle("Connecting to ${server.name}")
             .setMessage("Checking available server addresses…")
             .setNegativeButton("Cancel") { _, _ ->
+                stateView.text = if (mediaProvider == null) "Choose a media server"
+                    else "Connected to ${mediaProvider?.serverName}"
                 if (mediaProvider == null) showProviderSetup(required = true)
             }
             .create()
@@ -461,9 +463,10 @@ class MainActivity : Activity() {
 
         executor.execute {
             try {
-                val connection = plexAuth.selectServer(server)
+                val connection = plexAuth.selectServer(server, persist = false)
                 runOnUiThread {
                     if (!progress.isShowing) return@runOnUiThread
+                    plexAuth.saveConnection(connection)
                     progress.dismiss()
                     connectProvider(connection)
                 }
