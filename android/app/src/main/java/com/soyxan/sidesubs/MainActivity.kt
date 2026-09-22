@@ -302,6 +302,11 @@ class MainActivity : Activity() {
             setPadding(0, dp(12), 0, 0)
         }
         content.addView(help)
+        val viewLogButton = Button(this).apply {
+            text = "View log"
+            isAllCaps = false
+        }
+        content.addView(viewLogButton)
         setupStatusView = help
 
         val builder = AlertDialog.Builder(this)
@@ -321,6 +326,7 @@ class MainActivity : Activity() {
         setupDialog = dialog
 
         dialog.setOnShowListener {
+            viewLogButton.setOnClickListener { showDiagnosticLog() }
             val signIn = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
             signIn.setOnClickListener {
                 val providerType = providers[spinner.selectedItemPosition]
