@@ -56,6 +56,8 @@ class MainActivity : Activity() {
     private var hideChromeTask: Runnable? = null
     private var setupDialog: AlertDialog? = null
     private var setupStatusView: TextView? = null
+    private var setupSignInAgainButton: Button? = null
+    private var setupRequired = true
 
     private lateinit var root: LinearLayout
     private lateinit var topBar: LinearLayout
@@ -87,6 +89,7 @@ class MainActivity : Activity() {
     private val authPollTask = object : Runnable {
         override fun run() {
             val pending = pendingPlexLogin ?: return
+            val dialog = setupDialog
             if (authPollInFlight) {
                 handler.postDelayed(this, AUTH_POLL_INTERVAL_MS)
                 return
@@ -101,26 +104,35 @@ class MainActivity : Activity() {
                             handler.postDelayed(this, AUTH_POLL_INTERVAL_MS)
                             return@execute
                         }
+                        if (pendingPlexLogin !== pending) return@execute
                         plexLoginAuthorized = true
-                        runOnUiThread { setupStatusView?.text = "Signed in. Finding your Plex server…" }
+                        runOnUiThread {
+                            if (setupDialog !== dialog) return@runOnUiThread
+                            setupStatusView?.text = "Signed in. Finding your Plex server…"
+                            setupDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.text = "Find Plex servers"
+                            setupSignInAgainButton?.visibility = View.VISIBLE
+                        }
                     }
 
                     val servers = plexAuth.listServers()
+                    if (pendingPlexLogin !== pending) return@execute
                     pendingPlexLogin = null
                     plexLoginAuthorized = false
                     runOnUiThread {
-                        setupDialog?.dismiss()
+                        if (setupDialog !== dialog) return@runOnUiThread
                         if (servers.isEmpty()) {
-                            showPlexConnectionError("No Plex Media Servers found in your account.") {
-                                loadServerChooser(required = true)
-                            }
+                            setupStatusView?.text = "No Plex Media Servers found in your account."
+                            setupDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = true
                         } else {
-                            showServerChooser(servers, required = true)
+                            setupDialog?.dismiss()
+                            showServerChooser(servers, required = setupRequired)
                         }
                     }
                 } catch (error: Exception) {
+                    if (pendingPlexLogin !== pending) return@execute
                     if (error is IOException) {
                         runOnUiThread {
+                            if (setupDialog !== dialog) return@runOnUiThread
                             setupStatusView?.text =
                                 "Cannot reach Plex right now. Retrying automatically…"
                         }
@@ -129,8 +141,14 @@ class MainActivity : Activity() {
                         pendingPlexLogin = null
                         plexLoginAuthorized = false
                         runOnUiThread {
+                            if (setupDialog !== dialog) return@runOnUiThread
                             setupStatusView?.text = "Plex sign-in: ${friendlyAuthError(error)}"
-                            setupDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = true
+                            setupDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.apply {
+                                text = if (plexAuth.hasAccountToken()) "Find Plex servers" else "Sign in with Plex"
+                                isEnabled = true
+                            }
+                            setupSignInAgainButton?.visibility =
+                                if (plexAuth.hasAccountToken()) View.VISIBLE else View.GONE
                         }
                     }
                 } finally {
@@ -152,7 +170,8 @@ class MainActivity : Activity() {
         val afterCrash = {
             when {
                 plexAuth.hasSavedServer() -> restoreSavedProvider()
-                plexAuth.hasAccountToken() -> loadServerChooser(required = true)
+                plexAuth.hasAccountToken() ->
+                    showProviderSetup(required = true, message = "Signed in to Plex. Find a media server to continue.")
                 else -> showProviderSetup(required = true)
             }
         }
@@ -268,9 +287,7 @@ class MainActivity : Activity() {
                 diagnostics.add("Restore server failed: ${error.javaClass.simpleName}")
                 runOnUiThread {
                     stateView.text = "Choose a media server"
-                    showPlexConnectionError(friendlyServerError(error)) {
-                        restoreSavedProvider()
-                    }
+                    showProviderSetup(required = true, message = friendlyServerError(error))
                 }
             }
         }
@@ -279,6 +296,7 @@ class MainActivity : Activity() {
     private fun showProviderSetup(required: Boolean, message: String? = null) {
         if (isFinishing) return
         setupDialog?.dismiss()
+        setupRequired = required
 
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -307,6 +325,22 @@ class MainActivity : Activity() {
             isAllCaps = false
         }
         content.addView(viewLogButton)
+        if (mediaProvider == null) {
+            val signInAgain = Button(this).apply {
+                text = "Sign in again"
+                isAllCaps = false
+                visibility = if (plexAuth.hasAccountToken()) View.VISIBLE else View.GONE
+                setOnClickListener {
+                    handler.removeCallbacks(authPollTask)
+                    pendingPlexLogin = null
+                    plexLoginAuthorized = false
+                    plexAuth.signOut()
+                    showProviderSetup(required = required)
+                }
+            }
+            content.addView(signInAgain)
+            setupSignInAgainButton = signInAgain
+        }
         setupStatusView = help
 
         val builder = AlertDialog.Builder(this)
@@ -333,7 +367,6 @@ class MainActivity : Activity() {
                 when (providerType) {
                     MediaProviderType.PLEX -> {
                         if (plexAuth.hasAccountToken()) {
-                            dialog.dismiss()
                             loadServerChooser(required = required)
                         } else {
                             signIn.isEnabled = false
@@ -349,8 +382,12 @@ class MainActivity : Activity() {
         }
         dialog.setOnDismissListener {
             if (setupDialog === dialog) {
+                handler.removeCallbacks(authPollTask)
+                pendingPlexLogin = null
+                plexLoginAuthorized = false
                 setupDialog = null
                 setupStatusView = null
+                setupSignInAgainButton = null
             }
         }
         dialog.show()
@@ -412,25 +449,50 @@ class MainActivity : Activity() {
         required: Boolean,
     ) {
         stateView.text = "Checking connections to ${server.name}…"
+        val progress = AlertDialog.Builder(this)
+            .setTitle("Connecting to ${server.name}")
+            .setMessage("Checking available server addresses…")
+            .setNegativeButton("Cancel") { _, _ ->
+                if (mediaProvider == null) showProviderSetup(required = true)
+            }
+            .create()
+        progress.setCancelable(false)
+        progress.show()
+
         executor.execute {
             try {
                 val connection = plexAuth.selectServer(server)
-                runOnUiThread { connectProvider(connection) }
+                runOnUiThread {
+                    if (!progress.isShowing) return@runOnUiThread
+                    progress.dismiss()
+                    connectProvider(connection)
+                }
             } catch (error: Exception) {
                 diagnostics.add("Connect to selected server failed: ${error.javaClass.simpleName}")
                 runOnUiThread {
-                    stateView.text = if (mediaProvider == null) "Choose a media server" else "Connected to ${mediaProvider?.serverName}"
+                    if (!progress.isShowing) return@runOnUiThread
+                    progress.dismiss()
+                    stateView.text = if (mediaProvider == null) "Choose a media server"
+                        else "Connected to ${mediaProvider?.serverName}"
+                    var navigating = false
                     AlertDialog.Builder(this)
                         .setTitle("Unable to connect to ${server.name}")
                         .setMessage(friendlyServerError(error))
                         .setPositiveButton("Retry") { _, _ ->
+                            navigating = true
                             connectToServer(server, servers, required)
                         }
                         .setNeutralButton(if (servers.size > 1) "Choose server" else "Reload servers") { _, _ ->
+                            navigating = true
                             if (servers.size > 1) showServerChooser(servers, required)
-                            else loadServerChooser(required = required)
+                            else loadServerChooser(required)
                         }
                         .setNegativeButton("Close", null)
+                        .setOnDismissListener {
+                            if (!navigating && mediaProvider == null) {
+                                showProviderSetup(required = true, message = friendlyServerError(error))
+                            }
+                        }
                         .show()
                 }
             }
@@ -829,43 +891,32 @@ class MainActivity : Activity() {
     }
 
     private fun loadServerChooser(required: Boolean = false) {
-        stateView.text = "Loading Plex servers…"
+        if (setupDialog == null) showProviderSetup(required, "Finding Plex servers…")
+        setupStatusView?.text = "Finding Plex servers…"
+        setupDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = false
+        val dialog = setupDialog
         executor.execute {
             try {
                 val servers = plexAuth.listServers()
                 runOnUiThread {
+                    if (setupDialog !== dialog) return@runOnUiThread
                     if (servers.isEmpty()) {
-                        stateView.text = "Choose a media server"
-                        showPlexConnectionError("No Plex Media Servers found in your account.") {
-                            loadServerChooser(required)
-                        }
+                        setupStatusView?.text = "No Plex Media Servers found in your account."
+                        setupDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = true
                     } else {
+                        setupDialog?.dismiss()
                         showServerChooser(servers, required)
                     }
                 }
             } catch (error: Exception) {
                 diagnostics.add("Load Plex servers failed: ${error.javaClass.simpleName}")
                 runOnUiThread {
-                    stateView.text = "Choose a media server"
-                    showPlexConnectionError(friendlyAuthError(error)) {
-                        loadServerChooser(required)
-                    }
+                    if (setupDialog !== dialog) return@runOnUiThread
+                    setupStatusView?.text = friendlyAuthError(error)
+                    setupDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = true
                 }
             }
         }
-    }
-
-    private fun showPlexConnectionError(message: String, retry: () -> Unit) {
-        AlertDialog.Builder(this)
-            .setTitle("Plex connection")
-            .setMessage(message)
-            .setPositiveButton("Retry") { _, _ -> retry() }
-            .setNeutralButton("Sign in again") { _, _ ->
-                plexAuth.signOut()
-                showProviderSetup(required = true)
-            }
-            .setNegativeButton("Close", null)
-            .show()
     }
 
     private fun confirmSignOut() {
