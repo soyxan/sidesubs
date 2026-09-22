@@ -243,15 +243,18 @@ class PlexClient(
                 val streamId = intValue(stream, "id", 0)
                 val codec = stream.optString("codec").lowercase(Locale.US)
                 val key = stream.optString("key")
-                val language = normalizeLanguage(
-                    firstNonEmpty(stream.optString("languageCode"), stream.optString("language"))
+                val rawLanguage = firstNonEmpty(
+                    stream.optString("languageCode"),
+                    stream.optString("language"),
                 )
+                val language = normalizeLanguage(rawLanguage)
                 val title = firstNonEmpty(
                     stream.optString("title"),
                     stream.optString("extendedDisplayTitle"),
                     stream.optString("displayTitle"),
                     if (language.isBlank()) "Subtitle $streamId" else language.uppercase(Locale.US),
                 )
+                val languageTag = inferLanguageTag(rawLanguage, title, language)
 
                 add(
                     SubtitleTrack(
@@ -266,6 +269,7 @@ class PlexClient(
                             "streamId" to streamId.toString(),
                             "partId" to partId.toString(),
                             "key" to key,
+                            "languageTag" to languageTag,
                         ),
                     )
                 )
@@ -360,6 +364,44 @@ class PlexClient(
 
         val authority = if (uri.port >= 0) "$host:${uri.port}" else host
         return Uri.Builder().scheme(scheme).encodedAuthority(authority).build().toString()
+    }
+
+    private fun inferLanguageTag(raw: String, title: String, base: String): String {
+        val rawTag = raw.trim().lowercase(Locale.US).replace('_', '-')
+        if (Regex("^[a-z]{2}-[a-z0-9]{2,3}$").matches(rawTag)) return rawTag
+
+        val text = title.lowercase(Locale.US)
+        return when (base) {
+            "es" -> when {
+                listOf("latin america", "latinoamérica", "latinoamerica", "latam").any(text::contains) -> "es-419"
+                listOf("mexico", "méxico", "mexican").any(text::contains) -> "es-mx"
+                listOf("spain", "españa", "castilian", "castellano").any(text::contains) -> "es-es"
+                else -> "es"
+            }
+            "pt" -> when {
+                listOf("brazil", "brasil", "brazilian").any(text::contains) -> "pt-br"
+                listOf("portugal", "european").any(text::contains) -> "pt-pt"
+                else -> "pt"
+            }
+            "fr" -> when {
+                listOf("canada", "canadian", "québec", "quebec").any(text::contains) -> "fr-ca"
+                listOf("france", "french").any(text::contains) -> "fr-fr"
+                else -> "fr"
+            }
+            "en" -> when {
+                listOf("united kingdom", "british", "uk").any(text::contains) -> "en-gb"
+                listOf("australia", "australian").any(text::contains) -> "en-au"
+                listOf("canada", "canadian").any(text::contains) -> "en-ca"
+                listOf("united states", "american", "usa").any(text::contains) -> "en-us"
+                else -> "en"
+            }
+            "zh" -> when {
+                listOf("traditional", "繁體", "繁体").any(text::contains) -> "zh-tw"
+                listOf("simplified", "简体", "簡體").any(text::contains) -> "zh-cn"
+                else -> "zh"
+            }
+            else -> base
+        }
     }
 
     private fun normalizeLanguage(value: String): String {
