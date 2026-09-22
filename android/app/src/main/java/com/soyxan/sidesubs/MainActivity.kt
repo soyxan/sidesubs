@@ -466,7 +466,7 @@ class MainActivity : Activity() {
 
     private fun preferredTrackId(mediaId: String): String {
         val provider = mediaProvider?.providerType?.name ?: "UNKNOWN"
-        return preferences.getString("track_$provider_$mediaId", "").orEmpty()
+        return preferences.getString("track_${provider}_$mediaId", "").orEmpty()
     }
 
     private fun trackPreferenceKey(mediaId: String): String {
