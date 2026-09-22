@@ -197,6 +197,46 @@ def debug():
         return JSONResponse(status_code=500, content={"ok": False, "error": f"{type(exc).__name__}: {exc}"})
 
 
+@app.get("/api/debug/full-subtitle")
+def debug_full_subtitle(
+    player_id: str = "",
+    preferred_language: str = "",
+    subtitle_id: str = "",
+):
+    try:
+        media_provider = provider()
+        if not isinstance(media_provider, PlexProvider):
+            raise RuntimeError("Full subtitle diagnostic is currently Plex-only")
+
+        sessions = media_provider.list_sessions()
+        if player_id:
+            session = next((item for item in sessions if item.player_id == player_id), None)
+        else:
+            session = select_session(sessions)
+        if session is None:
+            return JSONResponse(status_code=404, content={"ok": False, "error": "No matching Plex session"})
+
+        tracks = media_provider.list_subtitle_tracks(session)
+        track = choose_subtitle_track(tracks, preferred_language, subtitle_id)
+        if track is None:
+            return JSONResponse(status_code=404, content={"ok": False, "error": "No compatible subtitle track"})
+
+        result = media_provider.debug_fetch_full_subtitle(session, track)
+        return {
+            "ok": True,
+            "title": session.title,
+            "rating_key": session.rating_key,
+            "player_id": session.player_id,
+            **result,
+        }
+    except Exception as exc:
+        logger.exception("Full subtitle diagnostic failed")
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+        )
+
+
 @app.get("/api/status")
 def status(preferred_language: str = "", subtitle_id: str = "", delay_ms: int = 0):
     try:
