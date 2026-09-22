@@ -52,6 +52,7 @@ class MainActivity : Activity() {
     private var mediaProvider: MediaProvider? = null
 
     @Volatile private var pollInFlight = false
+    @Volatile private var playbackGeneration = 0L
     @Volatile private var authPollInFlight = false
     @Volatile private var pendingPlexLogin: PlexPendingLogin? = null
     @Volatile private var plexLoginAuthorized = false
@@ -88,8 +89,9 @@ class MainActivity : Activity() {
 
     private val pollTask = object : Runnable {
         override fun run() {
+            if (!appInForeground) return
             pollOnce()
-            handler.postDelayed(this, POLL_INTERVAL_MS)
+            if (appInForeground) handler.postDelayed(this, POLL_INTERVAL_MS)
         }
     }
 
@@ -193,6 +195,10 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         appInForeground = true
+        if (mediaProvider != null) {
+            diagnostics.add("Playback polling resumed")
+            startPolling()
+        }
         if (pendingPlexLogin != null) {
             diagnostics.add("SideSubs resumed; continuing Plex sign-in")
             if (plexLoginAuthorized) setupStatusView?.text = "Signed in. Finding your Plex server…"
@@ -203,6 +209,7 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         appInForeground = false
+        stopPolling()
         handler.removeCallbacks(authPollTask)
         if (pendingPlexLogin != null) diagnostics.add("Plex sign-in paused while browser is open")
         super.onPause()
@@ -580,22 +587,31 @@ class MainActivity : Activity() {
 
     private fun startPolling() {
         handler.removeCallbacks(pollTask)
-        handler.post(pollTask)
+        playbackGeneration++
+        if (appInForeground) handler.post(pollTask)
     }
 
     private fun stopPolling() {
         handler.removeCallbacks(pollTask)
-        pollInFlight = false
+        playbackGeneration++
+        if (mediaProvider != null) diagnostics.add("Playback polling paused")
     }
 
+    private fun isCurrentPlayback(provider: MediaProvider, generation: Long): Boolean =
+        appInForeground && generation == playbackGeneration && mediaProvider === provider
+
     private fun pollOnce() {
+        if (!appInForeground) return
         val provider = mediaProvider ?: return
         if (pollInFlight) return
         pollInFlight = true
+        val generation = playbackGeneration
 
         executor.execute {
             try {
+                if (!isCurrentPlayback(provider, generation)) return@execute
                 val freshSessions = provider.sessions()
+                if (!isCurrentPlayback(provider, generation)) return@execute
                 if (freshSessions.size != loggedSessionCount) {
                     loggedSessionCount = freshSessions.size
                     diagnostics.add("Playback sessions available: ${freshSessions.size}")
@@ -613,6 +629,7 @@ class MainActivity : Activity() {
                 if (session == null) {
                     loggedPollError = ""
                     runOnUiThread {
+                        if (!isCurrentPlayback(provider, generation)) return@runOnUiThread
                         sessions = freshSessions
                         selectedSession = null
                         titleView.text = "SideSubs"
@@ -630,6 +647,7 @@ class MainActivity : Activity() {
                     session.state,
                 )
 
+                if (!isCurrentPlayback(provider, generation)) return@execute
                 var freshTracks = tracks
                 var track = selectedTrack
                 var freshTimeline = timeline
@@ -637,6 +655,7 @@ class MainActivity : Activity() {
 
                 if (needsTimeline) {
                     freshTracks = provider.subtitleTracks(session.mediaId)
+                    if (!isCurrentPlayback(provider, generation)) return@execute
                     track = chooseTrack(session.mediaId, freshTracks)
                     diagnostics.add(
                         "Subtitle tracks: media=${session.mediaId} total=${freshTracks.size} " +
@@ -648,13 +667,16 @@ class MainActivity : Activity() {
                     val wantedTrackId = preferredTrackId(session.mediaId)
                     if (track == null || (wantedTrackId.isNotEmpty() && wantedTrackId != track.id)) {
                         freshTracks = provider.subtitleTracks(session.mediaId)
+                        if (!isCurrentPlayback(provider, generation)) return@execute
                         track = chooseTrack(session.mediaId, freshTracks)
                         freshTimeline = track?.let { provider.subtitleTimeline(session.mediaId, it) }
                     }
                 }
 
+                if (!isCurrentPlayback(provider, generation)) return@execute
                 loggedPollError = ""
                 runOnUiThread {
+                    if (!isCurrentPlayback(provider, generation)) return@runOnUiThread
                     applyPlaybackState(
                         freshSessions,
                         session,
@@ -665,6 +687,7 @@ class MainActivity : Activity() {
                     )
                 }
             } catch (error: Exception) {
+                if (!isCurrentPlayback(provider, generation)) return@execute
                 val reason = Regex("Plex HTTP [0-9]{3}").find(error.message.orEmpty())?.value
                     ?: error.javaClass.simpleName
                 if (reason != loggedPollError) {
@@ -672,6 +695,7 @@ class MainActivity : Activity() {
                     diagnostics.add("Playback update failed: $reason")
                 }
                 runOnUiThread {
+                    if (!isCurrentPlayback(provider, generation)) return@runOnUiThread
                     stateView.text = "${provider.providerType.displayName}: ${friendlyError(error)}"
                 }
             } finally {
