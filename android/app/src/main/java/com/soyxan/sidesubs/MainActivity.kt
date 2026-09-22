@@ -106,10 +106,9 @@ class MainActivity : Activity() {
                     runOnUiThread {
                         setupDialog?.dismiss()
                         if (servers.isEmpty()) {
-                            showProviderSetup(
-                                required = true,
-                                message = "No Plex Media Servers found in your account.",
-                            )
+                            showPlexConnectionError("No Plex Media Servers found in your account.") {
+                                loadServerChooser(required = true)
+                            }
                         } else {
                             showServerChooser(servers, required = true)
                         }
@@ -144,8 +143,11 @@ class MainActivity : Activity() {
         buildUi()
 
         val afterCrash = {
-            if (plexAuth.hasSavedServer()) restoreSavedProvider()
-            else showProviderSetup(required = true)
+            when {
+                plexAuth.hasSavedServer() -> restoreSavedProvider()
+                plexAuth.hasAccountToken() -> loadServerChooser(required = true)
+                else -> showProviderSetup(required = true)
+            }
         }
         if (!showRecordedCrashIfAny(afterCrash)) afterCrash()
     }
@@ -258,7 +260,9 @@ class MainActivity : Activity() {
             } catch (error: Exception) {
                 runOnUiThread {
                     stateView.text = "Choose a media server"
-                    showProviderSetup(required = true, message = "Connection: ${friendlyServerError(error)}")
+                    showPlexConnectionError(friendlyServerError(error)) {
+                        restoreSavedProvider()
+                    }
                 }
             }
         }
@@ -295,7 +299,10 @@ class MainActivity : Activity() {
         val builder = AlertDialog.Builder(this)
             .setTitle("Connect SideSubs")
             .setView(content)
-            .setPositiveButton("Sign in with Plex", null)
+            .setPositiveButton(
+                if (plexAuth.hasAccountToken()) "Find Plex servers" else "Sign in with Plex",
+                null,
+            )
 
         if (!required) builder.setNegativeButton("Cancel", null)
 
@@ -311,12 +318,17 @@ class MainActivity : Activity() {
                 val providerType = providers[spinner.selectedItemPosition]
                 when (providerType) {
                     MediaProviderType.PLEX -> {
-                        signIn.isEnabled = false
-                        handler.removeCallbacks(authPollTask)
-                        pendingPlexLogin = null
-                        plexLoginAuthorized = false
-                        help.text = "Opening Plex sign-in…"
-                        beginPlexSignIn(help, signIn)
+                        if (plexAuth.hasAccountToken()) {
+                            dialog.dismiss()
+                            loadServerChooser(required = required)
+                        } else {
+                            signIn.isEnabled = false
+                            handler.removeCallbacks(authPollTask)
+                            pendingPlexLogin = null
+                            plexLoginAuthorized = false
+                            help.text = "Opening Plex sign-in…"
+                            beginPlexSignIn(help, signIn)
+                        }
                     }
                 }
             }
@@ -398,9 +410,9 @@ class MainActivity : Activity() {
                         .setPositiveButton("Retry") { _, _ ->
                             connectToServer(server, servers, required)
                         }
-                        .setNeutralButton(if (servers.size > 1) "Choose server" else "Sign in again") { _, _ ->
+                        .setNeutralButton(if (servers.size > 1) "Choose server" else "Reload servers") { _, _ ->
                             if (servers.size > 1) showServerChooser(servers, required)
-                            else showProviderSetup(required = required)
+                            else loadServerChooser(required = required)
                         }
                         .setNegativeButton("Close", null)
                         .show()
@@ -760,22 +772,43 @@ class MainActivity : Activity() {
         dialog.show()
     }
 
-    private fun loadServerChooser() {
+    private fun loadServerChooser(required: Boolean = false) {
         stateView.text = "Loading Plex servers…"
         executor.execute {
             try {
                 val servers = plexAuth.listServers()
                 runOnUiThread {
                     if (servers.isEmpty()) {
-                        stateView.text = "No Plex servers available"
+                        stateView.text = "Choose a media server"
+                        showPlexConnectionError("No Plex Media Servers found in your account.") {
+                            loadServerChooser(required)
+                        }
                     } else {
-                        showServerChooser(servers, required = false)
+                        showServerChooser(servers, required)
                     }
                 }
             } catch (error: Exception) {
-                runOnUiThread { stateView.text = "Plex: ${friendlyError(error)}" }
+                runOnUiThread {
+                    stateView.text = "Choose a media server"
+                    showPlexConnectionError(friendlyAuthError(error)) {
+                        loadServerChooser(required)
+                    }
+                }
             }
         }
+    }
+
+    private fun showPlexConnectionError(message: String, retry: () -> Unit) {
+        AlertDialog.Builder(this)
+            .setTitle("Plex connection")
+            .setMessage(message)
+            .setPositiveButton("Retry") { _, _ -> retry() }
+            .setNeutralButton("Sign in again") { _, _ ->
+                plexAuth.signOut()
+                showProviderSetup(required = true)
+            }
+            .setNegativeButton("Close", null)
+            .show()
     }
 
     private fun confirmSignOut() {
@@ -972,6 +1005,9 @@ class MainActivity : Activity() {
 
     private fun friendlyAuthError(error: Throwable): String {
         if (error is IOException) return "Cannot reach Plex. Check your connection and try again."
+        if (error.message?.contains("HTTP 429") == true) {
+            return "Plex is limiting sign-in attempts. Please wait a few minutes and try again."
+        }
         if (error.message?.contains("HTTP 401") == true) {
             return "Plex did not accept the sign-in. Please try again."
         }
@@ -1013,7 +1049,7 @@ class MainActivity : Activity() {
         const val KEY_DELAY_MS = "subtitle_delay_ms"
         const val KEY_LAST_CRASH = "last_crash"
         const val POLL_INTERVAL_MS = 750L
-        const val AUTH_POLL_INTERVAL_MS = 1_000L
+        const val AUTH_POLL_INTERVAL_MS = 3_000L
         const val NETWORK_RETRY_INTERVAL_MS = 3_000L
     }
 }
