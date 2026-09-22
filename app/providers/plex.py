@@ -241,28 +241,44 @@ class PlexProvider(MediaProvider):
         transcode_session = uuid.uuid4().hex[:24]
         playback_session_id = uuid.uuid4().hex
         headers = self._request_headers(playback_session_id)
-        params = {
+        headers["Accept"] = "application/json"
+
+        # Match the official Plex client flow observed for embedded sidecar
+        # extraction: select the stream, establish a video transcode decision
+        # using HLS, then fetch the subtitle file over HTTP with the same
+        # transcode session.
+        common_params = {
             "hasMDE": 1,
             "path": f"/library/metadata/{session.rating_key}",
             "mediaIndex": 0,
             "partIndex": 0,
-            "protocol": "http",
             "fastSeek": 1,
             "directPlay": 1,
             "directStream": 1,
+            "directStreamAudio": 1,
             "subtitleSize": 100,
             "audioBoost": 100,
+            "videoQuality": 100,
+            "videoResolution": "4096x2160",
             "location": "lan",
-            "directStreamAudio": 1,
-            "mediaBufferSize": 102400,
+            "mediaBufferSize": 50000,
             "session": transcode_session,
             "subtitles": "sidecar",
             "subtitleStreamID": stream_id,
-            "copyts": 1,
-            "offset": 0,
             "X-Plex-Token": self.token,
         }
+        decision_params = {
+            **common_params,
+            "protocol": "hls",
+        }
+        subtitle_params = {
+            **common_params,
+            "protocol": "http",
+            "copyts": 1,
+            "offset": 0,
+        }
 
+        response = None
         with self._transcode_lock:
             item = self._plex().fetchItem(int(session.rating_key))
             media = list(getattr(item, "media", []) or [])
@@ -273,21 +289,51 @@ class PlexProvider(MediaProvider):
             changed_global_selection = old_stream_id != stream_id
 
             if changed_global_selection:
-                self._select_stream(part_id, stream_id)
+                select_response = requests.put(
+                    f"{self.base_url}/library/parts/{part_id}",
+                    params={
+                        "allParts": 1,
+                        "subtitleStreamID": stream_id,
+                        "X-Plex-Token": self.token,
+                    },
+                    timeout=5,
+                )
+                select_response.raise_for_status()
 
             try:
+                decision = requests.get(
+                    f"{self.base_url}/video/:/transcode/universal/decision",
+                    params=decision_params,
+                    headers=headers,
+                    timeout=10,
+                )
+                decision.raise_for_status()
+
                 response = requests.get(
                     f"{self.base_url}/subtitles/:/transcode/universal/start",
-                    params=params,
+                    params=subtitle_params,
                     headers=headers,
-                    timeout=(5, 30),
+                    timeout=(5, 120),
                 )
-                response.raise_for_status()
+                if response.status_code >= 400:
+                    body = response.text[:1000]
+                    raise RuntimeError(
+                        f"Plex full-subtitle request returned HTTP {response.status_code}: {body}"
+                    )
                 payload = response.content
             finally:
                 if changed_global_selection:
                     try:
-                        self._select_stream(part_id, old_stream_id)
+                        restore_response = requests.put(
+                            f"{self.base_url}/library/parts/{part_id}",
+                            params={
+                                "allParts": 1,
+                                "subtitleStreamID": old_stream_id,
+                                "X-Plex-Token": self.token,
+                            },
+                            timeout=5,
+                        )
+                        restore_response.raise_for_status()
                     except Exception:
                         logger.exception("Unable to restore Plex subtitle stream %s", old_stream_id)
 
@@ -307,7 +353,7 @@ class PlexProvider(MediaProvider):
         return {
             "mode": "plex_http_transcode",
             "track": track.as_dict(),
-            "content_type": response.headers.get("content-type"),
+            "content_type": response.headers.get("content-type") if response is not None else None,
             "bytes": len(payload),
             "cue_count": len(cues),
             "first": (
