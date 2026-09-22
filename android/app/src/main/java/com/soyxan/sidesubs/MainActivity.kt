@@ -433,8 +433,8 @@ class MainActivity : Activity() {
                 d.dismiss()
                 connectToServer(servers[which], servers, required)
             }
-            .apply {
-                if (!required) setNegativeButton("Cancel", null)
+            .setNegativeButton(if (required) "Back" else "Cancel") { _, _ ->
+                if (required) showProviderSetup(required = true)
             }
             .create()
 
