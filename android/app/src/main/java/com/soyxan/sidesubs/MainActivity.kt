@@ -36,6 +36,7 @@ import java.io.StringWriter
 import java.io.IOException
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -54,6 +55,7 @@ class MainActivity : Activity() {
     @Volatile private var authPollInFlight = false
     @Volatile private var pendingPlexLogin: PlexPendingLogin? = null
     @Volatile private var plexLoginAuthorized = false
+    @Volatile private var appInForeground = false
     private var cinemaMode = false
     private var hideChromeTask: Runnable? = null
     private var setupDialog: AlertDialog? = null
@@ -94,6 +96,7 @@ class MainActivity : Activity() {
     private val authPollTask = object : Runnable {
         override fun run() {
             val pending = pendingPlexLogin ?: return
+            if (!appInForeground) return
             val dialog = setupDialog
             if (authPollInFlight) {
                 handler.postDelayed(this, AUTH_POLL_INTERVAL_MS)
@@ -106,7 +109,7 @@ class MainActivity : Activity() {
                     if (!plexLoginAuthorized) {
                         val token = plexAuth.pollLogin(pending)
                         if (token == null) {
-                            handler.postDelayed(this, AUTH_POLL_INTERVAL_MS)
+                            if (appInForeground) handler.postDelayed(this, AUTH_POLL_INTERVAL_MS)
                             return@execute
                         }
                         if (pendingPlexLogin !== pending) return@execute
@@ -119,25 +122,29 @@ class MainActivity : Activity() {
                         }
                     }
 
+                    if (!appInForeground) {
+                        diagnostics.add("Plex server discovery deferred until SideSubs resumes")
+                        return@execute
+                    }
                     val servers = plexAuth.listServers()
                     if (pendingPlexLogin !== pending) return@execute
-                    pendingPlexLogin = null
-                    plexLoginAuthorized = false
                     runOnUiThread {
-                        if (setupDialog !== dialog) return@runOnUiThread
+                        if (setupDialog !== dialog || !appInForeground) return@runOnUiThread
+                        pendingPlexLogin = null
+                        plexLoginAuthorized = false
                         if (servers.isEmpty()) {
                             setupStatusView?.text = "No Plex Media Servers found in your account."
                             setupDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = true
                         } else {
                             setupDialog?.dismiss()
-                            showServerChooser(servers, required = setupRequired)
+                            showServerChooser(servers, required = setupRequired, retryAfterLogin = true)
                         }
                     }
                 } catch (error: Exception) {
-                    if (pendingPlexLogin !== pending) return@execute
+                    if (pendingPlexLogin !== pending || !appInForeground) return@execute
                     if (error is IOException) {
                         runOnUiThread {
-                            if (setupDialog !== dialog) return@runOnUiThread
+                            if (setupDialog !== dialog || !appInForeground) return@runOnUiThread
                             setupStatusView?.text =
                                 "Cannot reach Plex right now. Retrying automatically…"
                         }
@@ -146,7 +153,7 @@ class MainActivity : Activity() {
                         pendingPlexLogin = null
                         plexLoginAuthorized = false
                         runOnUiThread {
-                            if (setupDialog !== dialog) return@runOnUiThread
+                            if (setupDialog !== dialog || !appInForeground) return@runOnUiThread
                             setupStatusView?.text = "Plex sign-in: ${friendlyAuthError(error)}"
                             setupDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.apply {
                                 text = if (plexAuth.hasAccountToken()) "Find Plex servers" else "Sign in with Plex"
@@ -185,10 +192,20 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        appInForeground = true
         if (pendingPlexLogin != null) {
+            diagnostics.add("SideSubs resumed; continuing Plex sign-in")
+            if (plexLoginAuthorized) setupStatusView?.text = "Signed in. Finding your Plex server…"
             handler.removeCallbacks(authPollTask)
             handler.post(authPollTask)
         }
+    }
+
+    override fun onPause() {
+        appInForeground = false
+        handler.removeCallbacks(authPollTask)
+        if (pendingPlexLogin != null) diagnostics.add("Plex sign-in paused while browser is open")
+        super.onPause()
     }
 
     private fun buildUi() {
@@ -421,9 +438,13 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun showServerChooser(servers: List<PlexServerResource>, required: Boolean) {
+    private fun showServerChooser(
+        servers: List<PlexServerResource>,
+        required: Boolean,
+        retryAfterLogin: Boolean = false,
+    ) {
         if (servers.size == 1) {
-            connectToServer(servers.first(), servers, required)
+            connectToServer(servers.first(), servers, required, retryAfterLogin)
             return
         }
 
@@ -436,7 +457,7 @@ class MainActivity : Activity() {
             .setTitle("Choose Plex server")
             .setItems(labels) { d, which ->
                 d.dismiss()
-                connectToServer(servers[which], servers, required)
+                connectToServer(servers[which], servers, required, retryAfterLogin)
             }
             .setNegativeButton(if (required) "Back" else "Cancel") { _, _ ->
                 if (required) showProviderSetup(required = true)
@@ -452,12 +473,15 @@ class MainActivity : Activity() {
         server: PlexServerResource,
         servers: List<PlexServerResource>,
         required: Boolean,
+        retryAfterLogin: Boolean = false,
     ) {
         stateView.text = "Checking connections to ${server.name}…"
+        val cancelled = AtomicBoolean(false)
         val progress = AlertDialog.Builder(this)
             .setTitle("Connecting to ${server.name}")
             .setMessage("Checking available server addresses…")
             .setNegativeButton("Cancel") { _, _ ->
+                cancelled.set(true)
                 stateView.text = if (mediaProvider == null) "Choose a media server"
                     else "Connected to ${mediaProvider?.serverName}"
                 if (mediaProvider == null) showProviderSetup(required = true)
@@ -468,7 +492,24 @@ class MainActivity : Activity() {
 
         executor.execute {
             try {
-                val connection = plexAuth.selectServer(server, persist = false)
+                val connection = try {
+                    plexAuth.selectServer(server, persist = false)
+                } catch (error: Exception) {
+                    if (
+                        !retryAfterLogin ||
+                        cancelled.get() ||
+                        !appInForeground ||
+                        error.message?.contains("None of the connections advertised") != true
+                    ) throw error
+                    diagnostics.add("Initial post-login Plex probe failed; refreshing server addresses once")
+                    runOnUiThread {
+                        if (progress.isShowing) progress.setMessage("Refreshing Plex server addresses…")
+                    }
+                    val refreshed = plexAuth.listServers().firstOrNull { it.id == server.id }
+                        ?: throw error
+                    if (cancelled.get()) return@execute
+                    plexAuth.selectServer(refreshed, persist = false)
+                }
                 runOnUiThread {
                     if (!progress.isShowing) return@runOnUiThread
                     plexAuth.saveConnection(connection)
