@@ -36,6 +36,7 @@ data class PlexServerConnection(
 
 class PlexAuthManager(
     private val preferences: SharedPreferences,
+    private val diagnostics: DiagnosticLog,
 ) {
     val clientIdentifier: String
         get() = ensureIdentity().clientId
@@ -47,6 +48,7 @@ class PlexAuthManager(
         preferences.getString(KEY_ACCOUNT_TOKEN, "").orEmpty().isNotBlank()
 
     fun beginLogin(): PlexPendingLogin {
+        diagnostics.add("Plex PIN request started")
         val identity = ensureIdentity()
         val jwk = JSONObject()
             .put("kty", "OKP")
@@ -70,6 +72,7 @@ class PlexAuthManager(
         val pinId = response.optLong("id", -1L)
         val code = response.optString("code")
         check(pinId > 0 && code.isNotBlank()) { "Plex did not return a valid sign-in PIN" }
+        diagnostics.add("Plex PIN created")
 
         val fragmentQuery = Uri.Builder()
             .appendQueryParameter("clientID", identity.clientId)
@@ -102,6 +105,7 @@ class PlexAuthManager(
         )
         if (token.isBlank()) return null
 
+        diagnostics.add("Plex PIN authorized; account token received")
         preferences.edit()
             .putString(KEY_ACCOUNT_TOKEN, token)
             .apply()
@@ -109,6 +113,7 @@ class PlexAuthManager(
     }
 
     fun listServers(): List<PlexServerResource> {
+        diagnostics.add("Requesting Plex resources")
         val token = ensureAccountToken()
         val url = Uri.parse("$PLEX_CLIENTS/api/v2/resources")
             .buildUpon()
@@ -121,7 +126,7 @@ class PlexAuthManager(
         val payload = requestBytes("GET", url, null, token)
         val array = JSONArray(payload.toString(StandardCharsets.UTF_8))
 
-        return buildList {
+        val servers = buildList {
             for (i in 0 until array.length()) {
                 val item = array.optJSONObject(i) ?: continue
                 val provides = item.optString("provides")
@@ -163,10 +168,16 @@ class PlexAuthManager(
                 )
             }
         }
+        diagnostics.add("Plex resources returned ${servers.size} usable server(s)")
+        servers.forEachIndexed { index, server ->
+            diagnostics.add("Server ${index + 1}: ${server.connections.size} advertised connection(s)")
+        }
+        return servers
     }
 
     fun selectServer(server: PlexServerResource): ProviderConnection {
         val connection = bestConnection(server)
+        diagnostics.add("Selected Plex connection: ${safeEndpoint(connection.uri)}")
         preferences.edit()
             .putString(KEY_PROVIDER, MediaProviderType.PLEX.name)
             .putString(KEY_SERVER_ID, server.id)
@@ -189,11 +200,15 @@ class PlexAuthManager(
         val savedId = preferences.getString(KEY_SERVER_ID, "").orEmpty()
         if (savedId.isBlank()) return null
 
-        val server = listServers().firstOrNull { it.id == savedId } ?: return null
+        diagnostics.add("Restoring saved Plex server")
+        val server = listServers().firstOrNull { it.id == savedId }
+        if (server == null) diagnostics.add("Saved server was absent from Plex resources")
+        if (server == null) return null
         return selectServer(server)
     }
 
     fun signOut() {
+        diagnostics.add("Plex account signed out")
         preferences.edit()
             .remove(KEY_ACCOUNT_TOKEN)
             .remove(KEY_PROVIDER)
@@ -314,15 +329,30 @@ class PlexAuthManager(
             )
         )
 
+        diagnostics.add("Checking ${candidates.size} Plex connection(s) in priority order")
         var rejectedToken = false
-        for (candidate in candidates) {
-            val status = runCatching { probeSessions(candidate.uri, server.accessToken) }.getOrNull()
+        for ((index, candidate) in candidates.withIndex()) {
+            val result = runCatching { probeSessions(candidate.uri, server.accessToken) }
+            val status = result.getOrNull()
+            val outcome = if (status != null) "HTTP $status"
+                else result.exceptionOrNull()?.javaClass?.simpleName ?: "Unknown error"
+            diagnostics.add(
+                "Probe ${index + 1}: ${safeEndpoint(candidate.uri)} " +
+                    "local=${candidate.local} relay=${candidate.relay} → $outcome"
+            )
             if (status == 200) return candidate
             if (status == 401 || status == 403) rejectedToken = true
         }
+        diagnostics.add(if (rejectedToken) "No authorized Plex connection" else "No reachable Plex connection")
         if (rejectedToken) error("The Plex server rejected the discovered authorization.")
         error("None of the connections advertised by this Plex server can be reached.")
     }
+
+    private fun safeEndpoint(uri: String): String = runCatching {
+        val url = URL(uri)
+        val port = if (url.port >= 0) ":${url.port}" else ""
+        "${url.protocol}://${url.host}$port"
+    }.getOrDefault("invalid address")
 
     private fun probeSessions(baseUrl: String, token: String): Int {
         val connection = URL("${baseUrl.trimEnd('/')}/status/sessions")
