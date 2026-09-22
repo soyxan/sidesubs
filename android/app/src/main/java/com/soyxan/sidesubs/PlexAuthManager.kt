@@ -43,6 +43,9 @@ class PlexAuthManager(
     fun hasSavedServer(): Boolean =
         preferences.getString(KEY_SERVER_ID, "").orEmpty().isNotBlank()
 
+    fun hasAccountToken(): Boolean =
+        preferences.getString(KEY_ACCOUNT_TOKEN, "").orEmpty().isNotBlank()
+
     fun beginLogin(): PlexPendingLogin {
         val identity = ensureIdentity()
         val jwk = JSONObject()
@@ -198,6 +201,7 @@ class PlexAuthManager(
             .remove(KEY_SERVER_NAME)
             .remove(KEY_SERVER_URL)
             .remove(KEY_SERVER_TOKEN)
+            .remove(KEY_CLIENT_ID)
             .remove(KEY_PRIVATE_KEY)
             .remove(KEY_PUBLIC_KEY)
             .remove(KEY_KID)
