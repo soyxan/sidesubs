@@ -343,9 +343,9 @@ class MainActivity : Activity() {
 
         addControl(sessionButton, 1.15f)
         addControl(subtitleButton, 2.05f)
-        addControl(delayButton, 0.55f)
-        addControl(settingsButton, 0.55f)
-        addControl(cinemaButton, 0.55f)
+        addIconControl(delayButton)
+        addIconControl(settingsButton)
+        addIconControl(cinemaButton)
 
         root.addView(
             controls,
@@ -800,11 +800,11 @@ class MainActivity : Activity() {
 
         titleView.text = session.title
         stateView.text = "${session.displayClient()} · ${formatPlaybackTime(position)} · ${session.state}"
-        sessionButton.text = ellipsize(session.displayClient(), 16)
+        sessionButton.text = session.displayClient()
         subtitleButton.text = if (track == null) {
             "No ${preferredLanguage().uppercase(Locale.US)}"
         } else {
-            ellipsize(track.label(), 32)
+            track.label()
         }
         subtitleButton.isEnabled = tracks.isNotEmpty()
 
@@ -1138,6 +1138,10 @@ class MainActivity : Activity() {
 
     private fun addControl(button: Button, weight: Float) {
         controls.addView(button, LinearLayout.LayoutParams(0, dp(46), weight))
+    }
+
+    private fun addIconControl(button: Button) {
+        controls.addView(button, LinearLayout.LayoutParams(dp(48), dp(46)))
     }
 
     private fun pillBackground() = GradientDrawable().apply {
