@@ -257,7 +257,8 @@ class MainActivity : Activity() {
                 runOnUiThread { connectProvider(connection) }
             } catch (error: Exception) {
                 runOnUiThread {
-                    showProviderSetup(required = true, message = "Connection: ${friendlyAuthError(error)}")
+                    stateView.text = "Choose a media server"
+                    showProviderSetup(required = true, message = "Connection: ${friendlyServerError(error)}")
                 }
             }
         }
@@ -353,7 +354,7 @@ class MainActivity : Activity() {
 
     private fun showServerChooser(servers: List<PlexServerResource>, required: Boolean) {
         if (servers.size == 1) {
-            connectProvider(plexAuth.selectServer(servers.first()))
+            connectToServer(servers.first(), servers, required)
             return
         }
 
@@ -366,7 +367,7 @@ class MainActivity : Activity() {
             .setTitle("Choose Plex server")
             .setItems(labels) { d, which ->
                 d.dismiss()
-                connectProvider(plexAuth.selectServer(servers[which]))
+                connectToServer(servers[which], servers, required)
             }
             .apply {
                 if (!required) setNegativeButton("Cancel", null)
@@ -376,6 +377,44 @@ class MainActivity : Activity() {
         dialog.setCancelable(!required)
         dialog.setCanceledOnTouchOutside(!required)
         dialog.show()
+    }
+
+    private fun connectToServer(
+        server: PlexServerResource,
+        servers: List<PlexServerResource>,
+        required: Boolean,
+    ) {
+        stateView.text = "Checking connections to ${server.name}…"
+        executor.execute {
+            try {
+                val connection = plexAuth.selectServer(server)
+                runOnUiThread { connectProvider(connection) }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    stateView.text = if (mediaProvider == null) "Choose a media server" else "Connected to ${mediaProvider?.serverName}"
+                    AlertDialog.Builder(this)
+                        .setTitle("Unable to connect to ${server.name}")
+                        .setMessage(friendlyServerError(error))
+                        .setPositiveButton("Retry") { _, _ ->
+                            connectToServer(server, servers, required)
+                        }
+                        .setNeutralButton(if (servers.size > 1) "Choose server" else "Sign in again") { _, _ ->
+                            if (servers.size > 1) showServerChooser(servers, required)
+                            else showProviderSetup(required = required)
+                        }
+                        .setNegativeButton("Close", null)
+                        .show()
+                }
+            }
+        }
+    }
+
+    private fun friendlyServerError(error: Throwable): String = when {
+        error.message?.contains("None of the connections advertised") == true ->
+            "Plex found your server, but this phone cannot reach any of its addresses. Check that the phone is on the same network, or enable remote access in Plex."
+        error.message?.contains("rejected the discovered authorization") == true ->
+            "Plex found your server, but it rejected the authorization. Try signing in again."
+        else -> friendlyAuthError(error)
     }
 
     private fun connectProvider(connection: ProviderConnection) {
