@@ -7,6 +7,7 @@ import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.graphics.Color;
+import android.graphics.Insets;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -104,6 +105,7 @@ public class MainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.BLACK);
         root.setPadding(dp(16), dp(12), dp(16), dp(10));
+        applySafeAreaInsets();
         root.setOnClickListener(v -> {
             if (cinemaMode) showCinemaChromeTemporarily();
         });
@@ -461,25 +463,64 @@ public class MainActivity extends Activity {
     }
 
     private void showDelayChooser() {
-        final int step = 250;
-        final int max = 5000;
-        int count = max / step + 1;
-        String[] labels = new String[count];
-        int current = preferences.getInt(KEY_DELAY_MS, 1000);
-        int checked = Math.max(0, Math.min(count - 1, Math.round(current / (float) step)));
-        for (int i = 0; i < count; i++) {
-            labels[i] = String.format(Locale.US, "%.2f s", (i * step) / 1000.0);
-        }
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.HORIZONTAL);
+        content.setGravity(Gravity.CENTER);
+        content.setPadding(dp(16), dp(8), dp(16), dp(4));
 
-        new AlertDialog.Builder(this)
+        Button minus = controlButton("−");
+        minus.setTextSize(24);
+
+        TextView value = new TextView(this);
+        value.setTextColor(Color.WHITE);
+        value.setTextSize(22);
+        value.setGravity(Gravity.CENTER);
+        value.setMinWidth(dp(120));
+
+        Button plus = controlButton("+");
+        plus.setTextSize(24);
+
+        final int[] delay = {
+            Math.max(0, Math.min(5000, preferences.getInt(KEY_DELAY_MS, 1000)))
+        };
+
+        Runnable refresh = () ->
+            value.setText(String.format(Locale.US, "%.2f s", delay[0] / 1000.0));
+        refresh.run();
+
+        minus.setOnClickListener(v -> {
+            delay[0] = Math.max(0, delay[0] - 250);
+            refresh.run();
+        });
+        plus.setOnClickListener(v -> {
+            delay[0] = Math.min(5000, delay[0] + 250);
+            refresh.run();
+        });
+
+        content.addView(minus, new LinearLayout.LayoutParams(dp(64), dp(52)));
+        content.addView(value, new LinearLayout.LayoutParams(dp(130), dp(52)));
+        content.addView(plus, new LinearLayout.LayoutParams(dp(64), dp(52)));
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
             .setTitle("Subtitle delay")
-            .setSingleChoiceItems(labels, checked, (dialog, which) -> {
-                preferences.edit().putInt(KEY_DELAY_MS, which * step).apply();
+            .setView(content)
+            .setNeutralButton("Reset", null)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Apply", null)
+            .create();
+
+        dialog.setOnShowListener(ignored -> {
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> {
+                delay[0] = 0;
+                refresh.run();
+            });
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                preferences.edit().putInt(KEY_DELAY_MS, delay[0]).apply();
                 updateDelayButton();
                 dialog.dismiss();
-            })
-            .setNegativeButton("Cancel", null)
-            .show();
+            });
+        });
+        dialog.show();
     }
 
     private void updateDelayButton() {
@@ -603,6 +644,7 @@ public class MainActivity extends Activity {
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
             enterImmersiveMode();
             showCinemaChromeTemporarily();
+            root.requestApplyInsets();
         } else {
             getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
@@ -611,6 +653,7 @@ public class MainActivity extends Activity {
             topBar.setVisibility(View.VISIBLE);
             controls.setVisibility(View.VISIBLE);
             if (hideChromeTask != null) handler.removeCallbacks(hideChromeTask);
+            root.requestApplyInsets();
         }
     }
 
@@ -627,6 +670,37 @@ public class MainActivity extends Activity {
             controls.setVisibility(View.GONE);
         };
         handler.postDelayed(hideChromeTask, 2500);
+    }
+
+    private void applySafeAreaInsets() {
+        root.setOnApplyWindowInsetsListener((view, windowInsets) -> {
+            int topInset = 0;
+            int bottomInset = 0;
+
+            if (!cinemaMode) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    Insets insets = windowInsets.getInsets(
+                        WindowInsets.Type.statusBars()
+                            | WindowInsets.Type.navigationBars()
+                            | WindowInsets.Type.displayCutout()
+                    );
+                    topInset = insets.top;
+                    bottomInset = insets.bottom;
+                } else {
+                    topInset = windowInsets.getSystemWindowInsetTop();
+                    bottomInset = windowInsets.getSystemWindowInsetBottom();
+                }
+            }
+
+            view.setPadding(
+                dp(16),
+                dp(12) + topInset,
+                dp(16),
+                dp(10) + bottomInset
+            );
+            return windowInsets;
+        });
+        root.requestApplyInsets();
     }
 
     private void enterImmersiveMode() {
