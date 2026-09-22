@@ -15,10 +15,12 @@ import java.util.UUID
 class PlexClient(
     baseUrl: String,
     token: String,
-) {
+    private val clientIdentifier: String,
+    override val serverName: String,
+) : MediaProvider {
+    override val providerType = MediaProviderType.PLEX
     val serverUrl: String = normalizeBaseUrl(baseUrl)
     private val token = token.trim()
-    private val clientIdentifier = "sidesubs-android-${UUID.randomUUID()}"
 
     private val subtitleCache = object : LinkedHashMap<String, SubtitleTimeline>(32, 0.75f, true) {
         override fun removeEldestEntry(
@@ -31,7 +33,7 @@ class PlexClient(
         require(this.token.isNotBlank()) { "Plex token is required" }
     }
 
-    fun sessions(): List<PlaybackSession> {
+    override fun sessions(): List<PlaybackSession> {
         val root = getJson("/status/sessions")
         val metadata = root.optJSONObject("MediaContainer")?.optJSONArray("Metadata") ?: return emptyList()
 
@@ -68,7 +70,7 @@ class PlexClient(
                         device = player.optString("device"),
                         state = player.optString("state", "unknown"),
                         title = displayTitle,
-                        ratingKey = stringValue(item, "ratingKey"),
+                        mediaId = stringValue(item, "ratingKey"),
                         sessionKey = stringValue(item, "sessionKey"),
                         position = item.optDouble("viewOffset", 0.0) / 1000.0,
                     )
@@ -77,18 +79,18 @@ class PlexClient(
         }
     }
 
-    fun subtitleTracks(ratingKey: String): List<SubtitleTrack> = metadata(ratingKey).tracks
+    override fun subtitleTracks(mediaId: String): List<SubtitleTrack> = metadata(mediaId).tracks
 
-    fun subtitleTimeline(ratingKey: String, track: SubtitleTrack): SubtitleTimeline {
-        val cacheKey = "$ratingKey:${track.id}"
+    override fun subtitleTimeline(mediaId: String, track: SubtitleTrack): SubtitleTimeline {
+        val cacheKey = "$mediaId:${track.id}"
         synchronized(subtitleCache) {
             subtitleCache[cacheKey]?.let { return it }
         }
 
-        val timeline = if (track.source == "external" && track.key.isNotBlank()) {
+        val timeline = if (track.source == "external" && track.providerData["key"].orEmpty().isNotBlank()) {
             fetchExternal(track)
         } else {
-            fetchEmbedded(ratingKey, track)
+            fetchEmbedded(mediaId, track)
         }
 
         synchronized(subtitleCache) {
@@ -97,14 +99,14 @@ class PlexClient(
         return timeline
     }
 
-    fun clearSubtitleCache() = synchronized(subtitleCache) {
+    override fun clearSubtitleCache() = synchronized(subtitleCache) {
         subtitleCache.clear()
     }
 
     private fun fetchExternal(track: SubtitleTrack): SubtitleTimeline {
         val payload = request(
             method = "GET",
-            path = track.key,
+            path = track.providerData["key"].orEmpty(),
             params = mapOf("encoding" to "utf-8", "format" to "srt"),
             readTimeoutMs = READ_TIMEOUT_MS,
             accept = "*/*",
@@ -114,14 +116,14 @@ class PlexClient(
         return SubtitleTimeline(cues)
     }
 
-    private fun fetchEmbedded(ratingKey: String, track: SubtitleTrack): SubtitleTimeline {
-        val oldStreamId = metadata(ratingKey).tracks.firstOrNull { it.selected }?.streamId ?: 0
+    private fun fetchEmbedded(mediaId: String, track: SubtitleTrack): SubtitleTimeline {
+        val oldStreamId = metadata(mediaId).tracks.firstOrNull { it.selected }?.streamId ?: 0
         val transcodeSession = UUID.randomUUID().toString().replace("-", "").take(24)
         val playbackSession = UUID.randomUUID().toString().replace("-", "")
 
         val common = linkedMapOf(
             "hasMDE" to "1",
-            "path" to "/library/metadata/$ratingKey",
+            "path" to "/library/metadata/$mediaId",
             "mediaIndex" to "0",
             "partIndex" to "0",
             "fastSeek" to "1",
@@ -136,11 +138,11 @@ class PlexClient(
             "mediaBufferSize" to "50000",
             "session" to transcodeSession,
             "subtitles" to "sidecar",
-            "subtitleStreamID" to track.streamId.toString(),
+            "subtitleStreamID" to (track.providerData["streamId"]?.toIntOrNull() ?: error("Missing Plex stream id")).toString(),
         )
 
-        val changedSelection = oldStreamId != track.streamId
-        if (changedSelection) selectSubtitle(track.partId, track.streamId)
+        val changedSelection = oldStreamId != (track.providerData["streamId"]?.toIntOrNull() ?: error("Missing Plex stream id"))
+        if (changedSelection) selectSubtitle((track.providerData["partId"]?.toIntOrNull() ?: error("Missing Plex part id")), (track.providerData["streamId"]?.toIntOrNull() ?: error("Missing Plex stream id")))
 
         try {
             request(
@@ -169,7 +171,7 @@ class PlexClient(
             check(cues.isNotEmpty()) { "Plex returned a subtitle with no parseable cues" }
             return SubtitleTimeline(cues)
         } finally {
-            if (changedSelection) runCatching { selectSubtitle(track.partId, oldStreamId) }
+            if (changedSelection) runCatching { selectSubtitle((track.providerData["partId"]?.toIntOrNull() ?: error("Missing Plex part id")), oldStreamId) }
         }
     }
 
@@ -183,8 +185,8 @@ class PlexClient(
         )
     }
 
-    private fun metadata(ratingKey: String): MetadataData {
-        val root = getJson("/library/metadata/$ratingKey")
+    private fun metadata(mediaId: String): MetadataData {
+        val root = getJson("/library/metadata/$mediaId")
         val item = root.optJSONObject("MediaContainer")
             ?.optJSONArray("Metadata")
             ?.optJSONObject(0)
@@ -219,15 +221,18 @@ class PlexClient(
 
                 add(
                     SubtitleTrack(
-                        streamId = streamId,
-                        partId = partId,
+                        id = "plex:$streamId",
                         source = if (key.isBlank()) "embedded" else "external",
                         language = language,
                         title = title,
                         codec = codec,
-                        key = key,
                         compatible = codec in TEXT_SUBTITLE_CODECS,
                         selected = intValue(stream, "selected", 0) == 1 || stream.optBoolean("selected", false),
+                        providerData = mapOf(
+                            "streamId" to streamId.toString(),
+                            "partId" to partId.toString(),
+                            "key" to key,
+                        ),
                     )
                 )
             }
