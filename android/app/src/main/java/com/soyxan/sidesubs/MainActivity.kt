@@ -354,6 +354,7 @@ class MainActivity : Activity() {
 
         setContentView(root)
         updateDelayDisplay()
+        applySubtitleSize(preferredSubtitleSize())
     }
 
     private fun restoreSavedProvider() {
@@ -959,6 +960,15 @@ class MainActivity : Activity() {
         val languageInput = input(preferredLanguage()).apply { hint = "es" }
         content.addView(languageInput)
 
+        content.addView(label("Subtitle size"))
+        val subtitleSizeButton = Button(this).apply {
+            text = subtitleSizeOption(preferredSubtitleSize()).label
+            isAllCaps = false
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            setOnClickListener { showSubtitleSizeChooser(this) }
+        }
+        content.addView(subtitleSizeButton)
+
         val viewLogButton = Button(this).apply {
             text = "View log"
             isAllCaps = false
@@ -1097,6 +1107,60 @@ class MainActivity : Activity() {
 
     private fun preferredLanguage(): String =
         preferences.getString(KEY_LANGUAGE, "es").orEmpty().ifBlank { "es" }
+
+    private fun preferredSubtitleSize(): String =
+        preferences.getString(KEY_SUBTITLE_SIZE, "medium").orEmpty().ifBlank { "medium" }
+
+    private fun subtitleSizeOption(id: String): SubtitleSizeOption =
+        SUBTITLE_SIZES.firstOrNull { it.id == id }
+            ?: SUBTITLE_SIZES.first { it.id == "medium" }
+
+    private fun applySubtitleSize(id: String) {
+        val option = subtitleSizeOption(id)
+        currentSubtitleView.textSize = option.currentSp
+        nextSubtitleView.textSize = option.nextSp
+    }
+
+    private fun showSubtitleSizeChooser(settingsButton: Button) {
+        val selectedId = preferredSubtitleSize()
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+        }
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Subtitle size")
+            .setView(ScrollView(this).apply { addView(list) })
+            .setNegativeButton("Cancel", null)
+            .create()
+
+        SUBTITLE_SIZES.forEach { option ->
+            val row = TextView(this).apply {
+                text = if (option.id == selectedId) "${option.label}  ✓" else option.label
+                setTextColor(Color.WHITE)
+                textSize = option.previewSp
+                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                setPadding(dp(16), dp(10), dp(16), dp(10))
+                minHeight = dp(48)
+                setOnClickListener {
+                    preferences.edit().putString(KEY_SUBTITLE_SIZE, option.id).apply()
+                    settingsButton.text = option.label
+                    applySubtitleSize(option.id)
+                    diagnostics.add("Subtitle size set: ${option.id}")
+                    dialog.dismiss()
+                }
+            }
+            list.addView(
+                row,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        }
+
+        dialog.show()
+    }
 
     private fun clearLoadedSubtitle() {
         loadedMediaId = ""
@@ -1335,10 +1399,27 @@ class MainActivity : Activity() {
         super.onDestroy()
     }
 
+    private data class SubtitleSizeOption(
+        val id: String,
+        val label: String,
+        val previewSp: Float,
+        val currentSp: Float,
+        val nextSp: Float,
+    )
+
     private companion object {
+        val SUBTITLE_SIZES = listOf(
+            SubtitleSizeOption("very-small", "Very small", 18f, 21f, 14f),
+            SubtitleSizeOption("small", "Small", 22f, 25f, 16f),
+            SubtitleSizeOption("medium", "Medium", 26f, 30f, 19f),
+            SubtitleSizeOption("large", "Large", 31f, 36f, 23f),
+            SubtitleSizeOption("very-large", "Very large", 36f, 42f, 26f),
+        )
+
         const val PREFS = "sidesubs_settings"
         const val KEY_PLAYER_ID = "player_id"
         const val KEY_LANGUAGE = "preferred_language"
+        const val KEY_SUBTITLE_SIZE = "subtitle_size"
         const val KEY_DELAY_MS = "subtitle_delay_ms"
         const val KEY_LAST_CRASH = "last_crash"
         const val MIN_DELAY_MS = 0
