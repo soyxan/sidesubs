@@ -30,7 +30,7 @@ class MediaProvider(ABC):
         track: SubtitleTrack,
         position: float,
     ) -> tuple[Cue, ...]:
-        """Synchronize a subtitle player and return buffered timed-text cues."""
+        """Return the complete timed-text cue timeline for the selected track."""
         raise NotImplementedError
 
     @abstractmethod
