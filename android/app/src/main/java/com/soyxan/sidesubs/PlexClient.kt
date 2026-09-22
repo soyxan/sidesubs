@@ -117,7 +117,16 @@ class PlexClient(
     }
 
     private fun fetchEmbedded(mediaId: String, track: SubtitleTrack): SubtitleTimeline {
-        val oldStreamId = metadata(mediaId).tracks.firstOrNull { it.selected }?.streamId ?: 0
+        val oldStreamId = metadata(mediaId).tracks
+            .firstOrNull { it.selected }
+            ?.providerData
+            ?.get("streamId")
+            ?.toIntOrNull()
+            ?: 0
+        val streamId = track.providerData["streamId"]?.toIntOrNull()
+            ?: error("Missing Plex stream id")
+        val partId = track.providerData["partId"]?.toIntOrNull()
+            ?: error("Missing Plex part id")
         val transcodeSession = UUID.randomUUID().toString().replace("-", "").take(24)
         val playbackSession = UUID.randomUUID().toString().replace("-", "")
 
@@ -138,11 +147,11 @@ class PlexClient(
             "mediaBufferSize" to "50000",
             "session" to transcodeSession,
             "subtitles" to "sidecar",
-            "subtitleStreamID" to (track.providerData["streamId"]?.toIntOrNull() ?: error("Missing Plex stream id")).toString(),
+            "subtitleStreamID" to streamId.toString(),
         )
 
-        val changedSelection = oldStreamId != (track.providerData["streamId"]?.toIntOrNull() ?: error("Missing Plex stream id"))
-        if (changedSelection) selectSubtitle((track.providerData["partId"]?.toIntOrNull() ?: error("Missing Plex part id")), (track.providerData["streamId"]?.toIntOrNull() ?: error("Missing Plex stream id")))
+        val changedSelection = oldStreamId != streamId
+        if (changedSelection) selectSubtitle(partId, streamId)
 
         try {
             request(
@@ -171,7 +180,7 @@ class PlexClient(
             check(cues.isNotEmpty()) { "Plex returned a subtitle with no parseable cues" }
             return SubtitleTimeline(cues)
         } finally {
-            if (changedSelection) runCatching { selectSubtitle((track.providerData["partId"]?.toIntOrNull() ?: error("Missing Plex part id")), oldStreamId) }
+            if (changedSelection) runCatching { selectSubtitle(partId, oldStreamId) }
         }
     }
 
