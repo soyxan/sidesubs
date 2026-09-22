@@ -2,6 +2,9 @@ package com.soyxan.sidesubs
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
@@ -23,6 +26,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.Spinner
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import java.io.PrintWriter
@@ -41,6 +45,7 @@ class MainActivity : Activity() {
 
     private lateinit var preferences: SharedPreferences
     private lateinit var plexAuth: PlexAuthManager
+    private lateinit var diagnostics: DiagnosticLog
     private var mediaProvider: MediaProvider? = null
 
     @Volatile private var pollInFlight = false
@@ -138,7 +143,9 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         preferences = getSharedPreferences(PREFS, MODE_PRIVATE)
-        plexAuth = PlexAuthManager(preferences)
+        diagnostics = DiagnosticLog(this)
+        plexAuth = PlexAuthManager(preferences, diagnostics)
+        diagnostics.add("App started; savedServer=${plexAuth.hasSavedServer()} accountTokenPresent=${plexAuth.hasAccountToken()}")
         installCrashRecorder()
         buildUi()
 
@@ -258,6 +265,7 @@ class MainActivity : Activity() {
                     ?: error("Saved Plex server is no longer available")
                 runOnUiThread { connectProvider(connection) }
             } catch (error: Exception) {
+                diagnostics.add("Restore server failed: ${error.javaClass.simpleName}")
                 runOnUiThread {
                     stateView.text = "Choose a media server"
                     showPlexConnectionError(friendlyServerError(error)) {
@@ -355,6 +363,7 @@ class MainActivity : Activity() {
                     handler.post(authPollTask)
                 }
             } catch (error: Exception) {
+                diagnostics.add("Start Plex sign-in failed: ${error.javaClass.simpleName}")
                 runOnUiThread {
                     pendingPlexLogin = null
                     status.text = "Plex sign-in: ${friendlyAuthError(error)}"
@@ -402,6 +411,7 @@ class MainActivity : Activity() {
                 val connection = plexAuth.selectServer(server)
                 runOnUiThread { connectProvider(connection) }
             } catch (error: Exception) {
+                diagnostics.add("Connect to selected server failed: ${error.javaClass.simpleName}")
                 runOnUiThread {
                     stateView.text = if (mediaProvider == null) "Choose a media server" else "Connected to ${mediaProvider?.serverName}"
                     AlertDialog.Builder(this)
@@ -440,6 +450,7 @@ class MainActivity : Activity() {
         }
 
         mediaProvider = provider
+        diagnostics.add("Connected to Plex server using validated address")
         playbackClock.clear()
         clearLoadedSubtitle()
         stateView.text = "Connecting to ${connection.serverName}…"
@@ -723,7 +734,13 @@ class MainActivity : Activity() {
     private fun showSettings() {
         val provider = mediaProvider
         if (provider == null) {
-            showProviderSetup(required = false)
+            AlertDialog.Builder(this)
+                .setTitle("SideSubs settings")
+                .setMessage("No media server connected.")
+                .setPositiveButton("Connect") { _, _ -> showProviderSetup(required = false) }
+                .setNeutralButton("View log") { _, _ -> showDiagnosticLog() }
+                .setNegativeButton("Close", null)
+                .show()
             return
         }
 
@@ -741,6 +758,12 @@ class MainActivity : Activity() {
         val languageInput = input(preferredLanguage()).apply { hint = "es" }
         content.addView(languageInput)
 
+        val viewLogButton = Button(this).apply {
+            text = "View log"
+            isAllCaps = false
+        }
+        content.addView(viewLogButton)
+
         val dialog = AlertDialog.Builder(this)
             .setTitle("SideSubs settings")
             .setView(content)
@@ -750,6 +773,10 @@ class MainActivity : Activity() {
             .create()
 
         dialog.setOnShowListener {
+            viewLogButton.setOnClickListener {
+                dialog.dismiss()
+                showDiagnosticLog()
+            }
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val language = languageInput.text.toString()
                     .trim()
@@ -772,6 +799,29 @@ class MainActivity : Activity() {
         dialog.show()
     }
 
+    private fun showDiagnosticLog() {
+        val log = diagnostics.read()
+        val view = TextView(this).apply {
+            text = "Server addresses may appear here. PINs and tokens are not logged.\n\n$log"
+            setTextColor(Color.WHITE)
+            textSize = 12f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setTextIsSelectable(true)
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
+        val scroll = ScrollView(this).apply { addView(view) }
+        AlertDialog.Builder(this)
+            .setTitle("SideSubs log")
+            .setView(scroll)
+            .setPositiveButton("Copy log") { _, _ ->
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("SideSubs log", log))
+                Toast.makeText(this, "Log copied", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
     private fun loadServerChooser(required: Boolean = false) {
         stateView.text = "Loading Plex servers…"
         executor.execute {
@@ -788,6 +838,7 @@ class MainActivity : Activity() {
                     }
                 }
             } catch (error: Exception) {
+                diagnostics.add("Load Plex servers failed: ${error.javaClass.simpleName}")
                 runOnUiThread {
                     stateView.text = "Choose a media server"
                     showPlexConnectionError(friendlyAuthError(error)) {
