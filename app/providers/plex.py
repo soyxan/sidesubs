@@ -29,7 +29,6 @@ class PlexProvider(MediaProvider):
         self._transcode_lock = threading.Lock()
         self._track_cache: dict[str, tuple[float, list[SubtitleTrack]]] = {}
         self._subtitle_cache: dict[tuple[str, str], tuple[Cue, ...]] = {}
-        self._subtitle_cache_info: dict[tuple[str, str], dict] = {}
         self._track_cache_ttl = 30.0
         self._subtitle_cache_max_entries = 32
 
@@ -170,15 +169,12 @@ class PlexProvider(MediaProvider):
         self,
         cache_key: tuple[str, str],
         cues: tuple[Cue, ...],
-        info: dict,
     ) -> tuple[Cue, ...]:
         with self._lock:
             self._subtitle_cache[cache_key] = cues
-            self._subtitle_cache_info[cache_key] = info
             while len(self._subtitle_cache) > self._subtitle_cache_max_entries:
                 oldest = next(iter(self._subtitle_cache))
                 self._subtitle_cache.pop(oldest, None)
-                self._subtitle_cache_info.pop(oldest, None)
         return cues
 
     def _fetch_external(self, session: PlaybackSession, track: SubtitleTrack) -> tuple[Cue, ...]:
@@ -210,15 +206,7 @@ class PlexProvider(MediaProvider):
             cues[0].start,
             cues[-1].end,
         )
-        return self._cache_subtitle(
-            cache_key,
-            cues,
-            {
-                "mode": "external",
-                "bytes": len(response.content),
-                "content_type": response.headers.get("content-type"),
-            },
-        )
+        return self._cache_subtitle(cache_key, cues)
 
     def _fetch_embedded_full(self, session: PlaybackSession, track: SubtitleTrack) -> tuple[Cue, ...]:
         cache_key = (session.rating_key, track.id)
@@ -347,15 +335,7 @@ class PlexProvider(MediaProvider):
                 cues[-1].end,
                 f"{coverage:.4f}" if coverage is not None else "<unknown>",
             )
-            return self._cache_subtitle(
-                cache_key,
-                cues,
-                {
-                    "mode": "plex_http_transcode",
-                    "bytes": len(payload),
-                    "content_type": response.headers.get("content-type") if response is not None else None,
-                },
-            )
+            return self._cache_subtitle(cache_key, cues)
 
     def _load_subtitle_cues(
         self,
@@ -367,31 +347,6 @@ class PlexProvider(MediaProvider):
         if track.source == "external" and track.provider_data.get("key"):
             return self._fetch_external(session, track)
         return self._fetch_embedded_full(session, track)
-
-    def debug_fetch_full_subtitle(self, session: PlaybackSession, track: SubtitleTrack) -> dict:
-        cues = self._load_subtitle_cues(session, track)
-        cache_key = (session.rating_key, track.id)
-        with self._lock:
-            info = dict(self._subtitle_cache_info.get(cache_key, {}))
-
-        duration = float(getattr(session.native, "duration", 0) or 0) / 1000.0
-        return {
-            "mode": info.get("mode", "cached"),
-            "track": track.as_dict(),
-            "content_type": info.get("content_type"),
-            "bytes": info.get("bytes"),
-            "cue_count": len(cues),
-            "first": (
-                {"start": cues[0].start, "end": cues[0].end, "text": cues[0].text}
-                if cues else None
-            ),
-            "last": (
-                {"start": cues[-1].start, "end": cues[-1].end, "text": cues[-1].text}
-                if cues else None
-            ),
-            "media_duration": duration or None,
-            "coverage": (cues[-1].end / duration) if cues and duration else None,
-        }
 
     def subtitle_cues(
         self,
