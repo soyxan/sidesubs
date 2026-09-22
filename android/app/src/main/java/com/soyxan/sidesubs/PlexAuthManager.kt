@@ -206,25 +206,29 @@ class PlexAuthManager(
 
     private fun isJwt(token: String): Boolean = token.count { it == '.' } == 2
 
-    fun selectServer(server: PlexServerResource): ProviderConnection {
-        val connection = bestConnection(server)
-        diagnostics.add("Selected Plex connection: ${safeEndpoint(connection.uri)}")
-        preferences.edit()
-            .putString(KEY_PROVIDER, MediaProviderType.PLEX.name)
-            .putString(KEY_SERVER_ID, server.id)
-            .putString(KEY_SERVER_NAME, server.name)
-            .putString(KEY_SERVER_URL, connection.uri)
-            .putString(KEY_SERVER_TOKEN, server.accessToken)
-            .apply()
-
-        return ProviderConnection(
+    fun selectServer(server: PlexServerResource, persist: Boolean = true): ProviderConnection {
+        val endpoint = bestConnection(server)
+        val connection = ProviderConnection(
             provider = MediaProviderType.PLEX,
             serverId = server.id,
             serverName = server.name,
-            baseUrl = connection.uri,
+            baseUrl = endpoint.uri,
             accessToken = server.accessToken,
             clientIdentifier = clientIdentifier,
         )
+        if (persist) saveConnection(connection)
+        return connection
+    }
+
+    fun saveConnection(connection: ProviderConnection) {
+        diagnostics.add("Selected Plex connection: ${safeEndpoint(connection.baseUrl)}")
+        preferences.edit()
+            .putString(KEY_PROVIDER, connection.provider.name)
+            .putString(KEY_SERVER_ID, connection.serverId)
+            .putString(KEY_SERVER_NAME, connection.serverName)
+            .putString(KEY_SERVER_URL, connection.baseUrl)
+            .putString(KEY_SERVER_TOKEN, connection.accessToken)
+            .apply()
     }
 
     fun restoreConnection(): ProviderConnection? {
