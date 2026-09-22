@@ -771,7 +771,10 @@ class MainActivity : Activity() {
             available.firstOrNull { it.compatible && it.id == manual }?.let { return it }
         }
         val language = preferredLanguage()
-        return available.firstOrNull { it.compatible && it.language.equals(language, ignoreCase = true) }
+        val compatible = available.filter { it.compatible }
+        if (language.isBlank()) return compatible.firstOrNull()
+        return compatible.firstOrNull { trackLanguageMatches(it, language, exactRegion = true) }
+            ?: compatible.firstOrNull { trackLanguageMatches(it, language, exactRegion = false) }
     }
 
     private fun preferredTrackId(mediaId: String): String {
@@ -957,8 +960,19 @@ class MainActivity : Activity() {
         content.addView(valueText(provider.serverName))
         content.addView(label("Preferred subtitle language"))
 
-        val languageInput = input(preferredLanguage()).apply { hint = "es" }
-        content.addView(languageInput)
+        var selectedLanguage = preferredLanguage()
+        val languageButton = Button(this).apply {
+            text = languageOption(selectedLanguage).label
+            isAllCaps = false
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            setOnClickListener {
+                showLanguageChooser(selectedLanguage) { option ->
+                    selectedLanguage = option.code
+                    text = option.label
+                }
+            }
+        }
+        content.addView(languageButton)
 
         content.addView(label("Subtitle size"))
         val subtitleSizeButton = Button(this).apply {
@@ -989,12 +1003,9 @@ class MainActivity : Activity() {
                 showDiagnosticLog()
             }
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val language = languageInput.text.toString()
-                    .trim()
-                    .lowercase(Locale.US)
-                    .ifBlank { "es" }
+                val language = selectedLanguage
                 preferences.edit().putString(KEY_LANGUAGE, language).apply()
-                diagnostics.add("Preferred subtitle language set: $language")
+                diagnostics.add("Preferred subtitle language set: ${language.ifBlank { "automatic" }}")
                 clearLoadedSubtitle()
                 dialog.dismiss()
                 pollOnce()
@@ -1106,7 +1117,63 @@ class MainActivity : Activity() {
     }
 
     private fun preferredLanguage(): String =
-        preferences.getString(KEY_LANGUAGE, "es").orEmpty().ifBlank { "es" }
+        preferences.getString(KEY_LANGUAGE, "es") ?: "es"
+
+    private fun languageOption(code: String): LanguageOption {
+        LANGUAGE_OPTIONS.firstOrNull { it.code.equals(code, ignoreCase = true) }?.let { return it }
+        return when (code.lowercase(Locale.US)) {
+            "es" -> LanguageOption("es", "Spanish")
+            "en" -> LanguageOption("en", "English")
+            "fr" -> LanguageOption("fr", "French")
+            "pt" -> LanguageOption("pt", "Portuguese")
+            "zh" -> LanguageOption("zh", "Chinese")
+            else -> LANGUAGE_OPTIONS.firstOrNull {
+                it.code.substringBefore("-").equals(code.substringBefore("-"), ignoreCase = true)
+            } ?: LanguageOption(code, code.ifBlank { "Automatic" })
+        }
+    }
+
+    private fun showLanguageChooser(selectedCode: String, onChoose: (LanguageOption) -> Unit) {
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Preferred subtitle language")
+            .setView(ScrollView(this).apply { addView(list) })
+            .setNegativeButton("Cancel", null)
+            .create()
+
+        LANGUAGE_OPTIONS.forEach { option ->
+            val row = TextView(this).apply {
+                text = if (option.code == selectedCode) "${option.label}  ✓" else option.label
+                setTextColor(Color.WHITE)
+                textSize = 16f
+                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                setPadding(dp(16), dp(10), dp(16), dp(10))
+                minHeight = dp(48)
+                setOnClickListener {
+                    onChoose(option)
+                    dialog.dismiss()
+                }
+            }
+            list.addView(row, matchWrap())
+        }
+        dialog.show()
+    }
+
+    private fun trackLanguageMatches(
+        track: SubtitleTrack,
+        preferred: String,
+        exactRegion: Boolean,
+    ): Boolean {
+        val wanted = preferred.lowercase(Locale.US)
+        val base = wanted.substringBefore("-")
+        val tag = track.providerData["languageTag"].orEmpty().lowercase(Locale.US)
+        if (exactRegion && wanted.contains("-")) return tag == wanted
+        return track.language.equals(base, ignoreCase = true) ||
+            tag.substringBefore("-").equals(base, ignoreCase = true)
+    }
 
     private fun preferredSubtitleSize(): String =
         preferences.getString(KEY_SUBTITLE_SIZE, "medium").orEmpty().ifBlank { "medium" }
@@ -1399,6 +1466,11 @@ class MainActivity : Activity() {
         super.onDestroy()
     }
 
+    private data class LanguageOption(
+        val code: String,
+        val label: String,
+    )
+
     private data class SubtitleSizeOption(
         val id: String,
         val label: String,
@@ -1408,6 +1480,58 @@ class MainActivity : Activity() {
     )
 
     private companion object {
+        val LANGUAGE_OPTIONS = listOf(
+            LanguageOption("", "Automatic"),
+            LanguageOption("ar", "Arabic"),
+            LanguageOption("bg", "Bulgarian"),
+            LanguageOption("ca", "Catalan"),
+            LanguageOption("zh-CN", "Chinese (Simplified)"),
+            LanguageOption("zh-TW", "Chinese (Traditional)"),
+            LanguageOption("hr", "Croatian"),
+            LanguageOption("cs", "Czech"),
+            LanguageOption("da", "Danish"),
+            LanguageOption("nl", "Dutch"),
+            LanguageOption("en-US", "English (United States)"),
+            LanguageOption("en-GB", "English (United Kingdom)"),
+            LanguageOption("en-AU", "English (Australia)"),
+            LanguageOption("en-CA", "English (Canada)"),
+            LanguageOption("et", "Estonian"),
+            LanguageOption("fi", "Finnish"),
+            LanguageOption("fr-FR", "French (France)"),
+            LanguageOption("fr-CA", "French (Canada)"),
+            LanguageOption("gl", "Galician"),
+            LanguageOption("de", "German"),
+            LanguageOption("el", "Greek"),
+            LanguageOption("he", "Hebrew"),
+            LanguageOption("hi", "Hindi"),
+            LanguageOption("hu", "Hungarian"),
+            LanguageOption("id", "Indonesian"),
+            LanguageOption("it", "Italian"),
+            LanguageOption("ja", "Japanese"),
+            LanguageOption("ko", "Korean"),
+            LanguageOption("lv", "Latvian"),
+            LanguageOption("lt", "Lithuanian"),
+            LanguageOption("ms", "Malay"),
+            LanguageOption("no", "Norwegian"),
+            LanguageOption("fa", "Persian"),
+            LanguageOption("pl", "Polish"),
+            LanguageOption("pt-PT", "Portuguese (Portugal)"),
+            LanguageOption("pt-BR", "Portuguese (Brazil)"),
+            LanguageOption("ro", "Romanian"),
+            LanguageOption("ru", "Russian"),
+            LanguageOption("sr", "Serbian"),
+            LanguageOption("sk", "Slovak"),
+            LanguageOption("sl", "Slovenian"),
+            LanguageOption("es-ES", "Spanish (Spain)"),
+            LanguageOption("es-419", "Spanish (Latin America)"),
+            LanguageOption("es-MX", "Spanish (Mexico)"),
+            LanguageOption("sv", "Swedish"),
+            LanguageOption("th", "Thai"),
+            LanguageOption("tr", "Turkish"),
+            LanguageOption("uk", "Ukrainian"),
+            LanguageOption("vi", "Vietnamese"),
+        )
+
         val SUBTITLE_SIZES = listOf(
             SubtitleSizeOption("very-small", "Very small", 18f, 21f, 14f),
             SubtitleSizeOption("small", "Small", 22f, 25f, 16f),
