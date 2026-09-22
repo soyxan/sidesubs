@@ -11,6 +11,7 @@ import android.content.pm.ActivityInfo
 import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -58,7 +59,9 @@ class MainActivity : Activity() {
     @Volatile private var plexLoginAuthorized = false
     @Volatile private var appInForeground = false
     private var cinemaMode = false
+    private var delayControlsOpen = false
     private var hideChromeTask: Runnable? = null
+    private var hideDelayControlsTask: Runnable? = null
     private var setupDialog: AlertDialog? = null
     private var setupStatusView: TextView? = null
     private var setupSignInAgainButton: Button? = null
@@ -67,6 +70,8 @@ class MainActivity : Activity() {
     private lateinit var root: LinearLayout
     private lateinit var topBar: LinearLayout
     private lateinit var controls: LinearLayout
+    private lateinit var delayControls: LinearLayout
+    private lateinit var delayValueView: TextView
     private lateinit var titleView: TextView
     private lateinit var stateView: TextView
     private lateinit var currentSubtitleView: TextView
@@ -227,6 +232,8 @@ class MainActivity : Activity() {
         topBar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
+            background = pillBackground()
+            setPadding(dp(16), dp(9), dp(16), dp(9))
         }
 
         titleView = TextView(this).apply {
@@ -273,9 +280,44 @@ class MainActivity : Activity() {
             LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f),
         )
 
+        delayValueView = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 18f
+            gravity = Gravity.CENTER
+            minWidth = dp(92)
+        }
+        val delayMinusButton = controlButton("−", description = "Decrease subtitle delay").apply {
+            textSize = 22f
+        }
+        val delayPlusButton = controlButton("+", description = "Increase subtitle delay").apply {
+            textSize = 22f
+        }
+        delayControls = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            background = pillBackground()
+            setPadding(dp(8), 0, dp(8), 0)
+            visibility = View.GONE
+            addView(delayMinusButton, LinearLayout.LayoutParams(dp(52), dp(44)))
+            addView(delayValueView, LinearLayout.LayoutParams(dp(104), dp(44)))
+            addView(delayPlusButton, LinearLayout.LayoutParams(dp(52), dp(44)))
+        }
+        root.addView(
+            delayControls,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                bottomMargin = dp(8)
+            },
+        )
+
         controls = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
+            background = pillBackground()
+            setPadding(dp(8), 0, dp(8), 0)
         }
 
         sessionButton = controlButton("Session", R.drawable.ic_tv)
@@ -286,7 +328,9 @@ class MainActivity : Activity() {
 
         sessionButton.setOnClickListener { showSessionChooser() }
         subtitleButton.setOnClickListener { showSubtitleChooser() }
-        delayButton.setOnClickListener { showDelayChooser() }
+        delayButton.setOnClickListener { showDelayControls() }
+        delayMinusButton.setOnClickListener { adjustDelay(-DELAY_STEP_MS) }
+        delayPlusButton.setOnClickListener { adjustDelay(DELAY_STEP_MS) }
         settingsButton.setOnClickListener { showSettings() }
         cinemaButton.setOnClickListener { setCinemaMode(!cinemaMode) }
 
@@ -302,7 +346,7 @@ class MainActivity : Activity() {
         )
 
         setContentView(root)
-        updateDelayButton()
+        updateDelayDisplay()
     }
 
     private fun restoreSavedProvider() {
@@ -845,66 +889,40 @@ class MainActivity : Activity() {
             .show()
     }
 
-    private fun showDelayChooser() {
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setPadding(dp(16), dp(8), dp(16), dp(4))
-        }
-
-        val minus = controlButton("−").apply { textSize = 24f }
-        val value = TextView(this).apply {
-            setTextColor(Color.WHITE)
-            textSize = 22f
-            gravity = Gravity.CENTER
-            minWidth = dp(120)
-        }
-        val plus = controlButton("+").apply { textSize = 24f }
-
-        var delay = preferences.getInt(KEY_DELAY_MS, 1000).coerceIn(0, 5000)
-        fun refresh() {
-            value.text = String.format(Locale.US, "%.2f s", delay / 1000.0)
-        }
-        refresh()
-
-        minus.setOnClickListener {
-            delay = max(0, delay - 250)
-            refresh()
-        }
-        plus.setOnClickListener {
-            delay = min(5000, delay + 250)
-            refresh()
-        }
-
-        content.addView(minus, LinearLayout.LayoutParams(dp(64), dp(52)))
-        content.addView(value, LinearLayout.LayoutParams(dp(130), dp(52)))
-        content.addView(plus, LinearLayout.LayoutParams(dp(64), dp(52)))
-
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("Subtitle delay")
-            .setView(content)
-            .setNeutralButton("Reset", null)
-            .setNegativeButton("Cancel", null)
-            .setPositiveButton("Apply", null)
-            .create()
-
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-                delay = 0
-                refresh()
-            }
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                preferences.edit().putInt(KEY_DELAY_MS, delay).apply()
-                updateDelayButton()
-                dialog.dismiss()
-            }
-        }
-        dialog.show()
+    private fun showDelayControls() {
+        delayControlsOpen = true
+        updateDelayDisplay()
+        delayControls.visibility = View.VISIBLE
+        scheduleDelayControlsHide()
+        if (cinemaMode) showCinemaChromeTemporarily()
     }
 
-    private fun updateDelayButton() {
+    private fun adjustDelay(deltaMs: Int) {
+        val current = preferences.getInt(KEY_DELAY_MS, 1000)
+        val updatedDelay = (current + deltaMs).coerceIn(MIN_DELAY_MS, MAX_DELAY_MS)
+        if (updatedDelay != current) {
+            preferences.edit().putInt(KEY_DELAY_MS, updatedDelay).apply()
+            diagnostics.add("Subtitle delay set: ${updatedDelay}ms")
+        }
+        updateDelayDisplay()
+        scheduleDelayControlsHide()
+        if (cinemaMode) showCinemaChromeTemporarily()
+    }
+
+    private fun scheduleDelayControlsHide() {
+        hideDelayControlsTask?.let(handler::removeCallbacks)
+        hideDelayControlsTask = Runnable {
+            delayControlsOpen = false
+            delayControls.visibility = View.GONE
+        }.also { handler.postDelayed(it, DELAY_CONTROLS_TIMEOUT_MS) }
+    }
+
+    private fun updateDelayDisplay() {
         val delay = if (::preferences.isInitialized) preferences.getInt(KEY_DELAY_MS, 1000) else 1000
-        delayButton.text = String.format(Locale.US, "%.1f", delay / 1000.0)
+        delayButton.text = String.format(Locale.US, "%.2f", delay / 1000.0)
+        if (::delayValueView.isInitialized) {
+            delayValueView.text = String.format(Locale.US, "%.2f s", delay / 1000.0)
+        }
     }
 
     private fun showSettings() {
@@ -1110,6 +1128,12 @@ class MainActivity : Activity() {
         controls.addView(button, LinearLayout.LayoutParams(0, dp(46), weight))
     }
 
+    private fun pillBackground() = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = dp(24).toFloat()
+        setColor(0xCC171717.toInt())
+    }
+
     private fun setCinemaMode(enabled: Boolean) {
         cinemaMode = enabled
         if (enabled) {
@@ -1138,7 +1162,12 @@ class MainActivity : Activity() {
 
     private fun setChromeVisible(visible: Boolean, animate: Boolean = true) {
         val target = if (visible) View.VISIBLE else View.GONE
-        if (topBar.visibility == target && controls.visibility == target) return
+        val delayTarget = if (visible && delayControlsOpen) View.VISIBLE else View.GONE
+        if (
+            topBar.visibility == target &&
+            controls.visibility == target &&
+            delayControls.visibility == delayTarget
+        ) return
         TransitionManager.endTransitions(root)
         if (animate) {
             TransitionManager.beginDelayedTransition(
@@ -1148,6 +1177,7 @@ class MainActivity : Activity() {
         }
         topBar.visibility = target
         controls.visibility = target
+        delayControls.visibility = delayTarget
     }
 
     private fun applySafeAreaInsets() {
@@ -1295,6 +1325,10 @@ class MainActivity : Activity() {
         const val KEY_LANGUAGE = "preferred_language"
         const val KEY_DELAY_MS = "subtitle_delay_ms"
         const val KEY_LAST_CRASH = "last_crash"
+        const val MIN_DELAY_MS = 0
+        const val MAX_DELAY_MS = 5000
+        const val DELAY_STEP_MS = 250
+        const val DELAY_CONTROLS_TIMEOUT_MS = 3000L
         const val POLL_INTERVAL_MS = 750L
         const val AUTH_POLL_INTERVAL_MS = 3_000L
         const val NETWORK_RETRY_INTERVAL_MS = 3_000L
