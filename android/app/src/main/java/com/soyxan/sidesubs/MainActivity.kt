@@ -2,25 +2,27 @@ package com.soyxan.sidesubs
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
 import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
-import android.widget.ScrollView
+import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import java.io.PrintWriter
@@ -37,10 +39,15 @@ class MainActivity : Activity() {
     private val playbackClock = PlaybackClock()
 
     private lateinit var preferences: SharedPreferences
-    private var plex: PlexClient? = null
+    private lateinit var plexAuth: PlexAuthManager
+    private var mediaProvider: MediaProvider? = null
+
     @Volatile private var pollInFlight = false
+    @Volatile private var authPollInFlight = false
+    private var pendingPlexLogin: PlexPendingLogin? = null
     private var cinemaMode = false
     private var hideChromeTask: Runnable? = null
+    private var setupDialog: AlertDialog? = null
 
     private lateinit var root: LinearLayout
     private lateinit var topBar: LinearLayout
@@ -60,7 +67,7 @@ class MainActivity : Activity() {
     private var selectedSession: PlaybackSession? = null
     private var selectedTrack: SubtitleTrack? = null
     private var timeline: SubtitleTimeline? = null
-    private var loadedRatingKey = ""
+    private var loadedMediaId = ""
 
     private val pollTask = object : Runnable {
         override fun run() {
@@ -69,20 +76,66 @@ class MainActivity : Activity() {
         }
     }
 
+    private val authPollTask = object : Runnable {
+        override fun run() {
+            val pending = pendingPlexLogin ?: return
+            if (authPollInFlight) {
+                handler.postDelayed(this, AUTH_POLL_INTERVAL_MS)
+                return
+            }
+
+            authPollInFlight = true
+            executor.execute {
+                try {
+                    val token = plexAuth.pollLogin(pending)
+                    if (token != null) {
+                        pendingPlexLogin = null
+                        val servers = plexAuth.listServers()
+                        runOnUiThread {
+                            setupDialog?.dismiss()
+                            setupDialog = null
+                            if (servers.isEmpty()) {
+                                stateView.text = "Plex account has no available media servers"
+                                showProviderSetup(required = true)
+                            } else {
+                                showServerChooser(servers, required = true)
+                            }
+                        }
+                    } else {
+                        handler.postDelayed(this, AUTH_POLL_INTERVAL_MS)
+                    }
+                } catch (error: Exception) {
+                    pendingPlexLogin = null
+                    runOnUiThread {
+                        stateView.text = "Plex sign-in: ${friendlyError(error)}"
+                        setupDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = true
+                    }
+                } finally {
+                    authPollInFlight = false
+                }
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         preferences = getSharedPreferences(PREFS, MODE_PRIVATE)
+        plexAuth = PlexAuthManager(preferences)
         installCrashRecorder()
         buildUi()
 
-        val url = preferences.getString(KEY_PLEX_URL, "").orEmpty()
-        val token = preferences.getString(KEY_PLEX_TOKEN, "").orEmpty()
-        if (url.isBlank() || token.isBlank()) {
-            showRecordedCrashIfAny(null)
-            showSettings(required = true)
-        } else {
-            configureClient(url, token)
-            if (!showRecordedCrashIfAny(::startPolling)) startPolling()
+        val afterCrash = {
+            if (plexAuth.hasSavedServer()) restoreSavedProvider()
+            else showProviderSetup(required = true)
+        }
+        if (!showRecordedCrashIfAny(afterCrash)) afterCrash()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (pendingPlexLogin != null) {
+            handler.removeCallbacks(authPollTask)
+            handler.post(authPollTask)
         }
     }
 
@@ -108,7 +161,7 @@ class MainActivity : Activity() {
             maxLines = 2
         }
         stateView = TextView(this).apply {
-            text = "Connecting to Plex…"
+            text = "Choose a media server"
             setTextColor(0xFF999999.toInt())
             textSize = 12f
             gravity = Gravity.CENTER
@@ -116,13 +169,7 @@ class MainActivity : Activity() {
         }
         topBar.addView(titleView)
         topBar.addView(stateView)
-        root.addView(
-            topBar,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-            ),
-        )
+        root.addView(topBar, matchWrap())
 
         val subtitleArea = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -164,7 +211,7 @@ class MainActivity : Activity() {
         sessionButton.setOnClickListener { showSessionChooser() }
         subtitleButton.setOnClickListener { showSubtitleChooser() }
         delayButton.setOnClickListener { showDelayChooser() }
-        settingsButton.setOnClickListener { showSettings(required = false) }
+        settingsButton.setOnClickListener { showSettings() }
         cinemaButton.setOnClickListener { setCinemaMode(!cinemaMode) }
 
         addControl(sessionButton, 1.5f)
@@ -182,37 +229,144 @@ class MainActivity : Activity() {
         updateDelayButton()
     }
 
-    private fun matchWrap() = LinearLayout.LayoutParams(
-        LinearLayout.LayoutParams.MATCH_PARENT,
-        LinearLayout.LayoutParams.WRAP_CONTENT,
-    )
-
-    private fun controlButton(label: String) = Button(this).apply {
-        text = label
-        setTextColor(Color.WHITE)
-        textSize = 12f
-        isAllCaps = false
-        isSingleLine = true
-        setBackgroundColor(Color.TRANSPARENT)
-        setPadding(dp(5), 0, dp(5), 0)
-    }
-
-    private fun addControl(button: Button, weight: Float) {
-        controls.addView(button, LinearLayout.LayoutParams(0, dp(46), weight))
-    }
-
-    private fun configureClient(url: String, token: String) {
-        runCatching {
-            PlexClient(url, token)
-        }.onSuccess { client ->
-            plex = client
-            playbackClock.clear()
-            clearLoadedSubtitle()
-            stateView.text = "Connecting to ${client.serverUrl}"
-        }.onFailure {
-            plex = null
-            stateView.text = "Invalid Plex configuration"
+    private fun restoreSavedProvider() {
+        stateView.text = "Connecting to saved media server…"
+        executor.execute {
+            try {
+                val connection = plexAuth.restoreConnection()
+                    ?: error("Saved Plex server is no longer available")
+                runOnUiThread { connectProvider(connection) }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    stateView.text = "Connection: ${friendlyError(error)}"
+                    showProviderSetup(required = true)
+                }
+            }
         }
+    }
+
+    private fun showProviderSetup(required: Boolean) {
+        if (isFinishing) return
+        setupDialog?.dismiss()
+
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(8))
+        }
+
+        content.addView(label("Media server"))
+        val providers = MediaProviderType.entries
+        val spinner = Spinner(this)
+        spinner.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            providers.map { it.displayName },
+        )
+        content.addView(spinner)
+
+        val help = TextView(this).apply {
+            text = "Choose the media server platform. SideSubs will use that provider's own sign-in flow."
+            setTextColor(0xFF999999.toInt())
+            textSize = 12f
+            setPadding(0, dp(12), 0, 0)
+        }
+        content.addView(help)
+
+        val builder = AlertDialog.Builder(this)
+            .setTitle("Connect SideSubs")
+            .setView(content)
+            .setPositiveButton("Sign in with Plex", null)
+
+        if (!required) builder.setNegativeButton("Cancel", null)
+
+        val dialog = builder.create().apply {
+            setCancelable(!required)
+            setCanceledOnTouchOutside(!required)
+        }
+        setupDialog = dialog
+
+        dialog.setOnShowListener {
+            val signIn = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            signIn.setOnClickListener {
+                val providerType = providers[spinner.selectedItemPosition]
+                when (providerType) {
+                    MediaProviderType.PLEX -> {
+                        signIn.isEnabled = false
+                        help.text = "Opening Plex sign-in…"
+                        beginPlexSignIn(help, signIn)
+                    }
+                }
+            }
+        }
+        dialog.setOnDismissListener {
+            if (setupDialog === dialog) setupDialog = null
+        }
+        dialog.show()
+    }
+
+    private fun beginPlexSignIn(status: TextView, button: Button) {
+        executor.execute {
+            try {
+                val pending = plexAuth.beginLogin()
+                pendingPlexLogin = pending
+                runOnUiThread {
+                    status.text = "Complete sign-in in your browser, then return to SideSubs."
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(pending.authUrl))
+                    startActivity(intent)
+                    handler.removeCallbacks(authPollTask)
+                    handler.post(authPollTask)
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    status.text = "Plex sign-in: ${friendlyError(error)}"
+                    button.isEnabled = true
+                }
+            }
+        }
+    }
+
+    private fun showServerChooser(servers: List<PlexServerResource>, required: Boolean) {
+        if (servers.size == 1) {
+            connectProvider(plexAuth.selectServer(servers.first()))
+            return
+        }
+
+        val labels = servers.map { server ->
+            val local = server.connections.any { it.local && !it.relay }
+            "${server.name}${if (local) " · Local" else ""}"
+        }.toTypedArray()
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Choose Plex server")
+            .setItems(labels) { d, which ->
+                d.dismiss()
+                connectProvider(plexAuth.selectServer(servers[which]))
+            }
+            .apply {
+                if (!required) setNegativeButton("Cancel", null)
+            }
+            .create()
+
+        dialog.setCancelable(!required)
+        dialog.setCanceledOnTouchOutside(!required)
+        dialog.show()
+    }
+
+    private fun connectProvider(connection: ProviderConnection) {
+        val provider = when (connection.provider) {
+            MediaProviderType.PLEX -> PlexClient(
+                baseUrl = connection.baseUrl,
+                token = connection.accessToken,
+                clientIdentifier = connection.clientIdentifier,
+                serverName = connection.serverName,
+            )
+        }
+
+        mediaProvider = provider
+        playbackClock.clear()
+        clearLoadedSubtitle()
+        stateView.text = "Connecting to ${connection.serverName}…"
+        startPolling()
     }
 
     private fun startPolling() {
@@ -220,14 +374,19 @@ class MainActivity : Activity() {
         handler.post(pollTask)
     }
 
+    private fun stopPolling() {
+        handler.removeCallbacks(pollTask)
+        pollInFlight = false
+    }
+
     private fun pollOnce() {
-        val client = plex ?: return
+        val provider = mediaProvider ?: return
         if (pollInFlight) return
         pollInFlight = true
 
         executor.execute {
             try {
-                val freshSessions = client.sessions()
+                val freshSessions = provider.sessions()
                 val session = chooseSession(freshSessions)
 
                 if (session == null) {
@@ -235,7 +394,7 @@ class MainActivity : Activity() {
                         sessions = freshSessions
                         selectedSession = null
                         titleView.text = "SideSubs"
-                        stateView.text = "No active Plex session"
+                        stateView.text = "No active ${provider.providerType.displayName} session · ${provider.serverName}"
                         currentSubtitleView.text = ""
                         nextSubtitleView.text = ""
                         sessionButton.text = "📺 Session"
@@ -252,18 +411,18 @@ class MainActivity : Activity() {
                 var freshTracks = tracks
                 var track = selectedTrack
                 var freshTimeline = timeline
-                val needsTimeline = session.ratingKey != loadedRatingKey
+                val needsTimeline = session.mediaId != loadedMediaId
 
                 if (needsTimeline) {
-                    freshTracks = client.subtitleTracks(session.ratingKey)
-                    track = chooseTrack(session.ratingKey, freshTracks)
-                    freshTimeline = track?.let { client.subtitleTimeline(session.ratingKey, it) }
+                    freshTracks = provider.subtitleTracks(session.mediaId)
+                    track = chooseTrack(session.mediaId, freshTracks)
+                    freshTimeline = track?.let { provider.subtitleTimeline(session.mediaId, it) }
                 } else {
-                    val wantedTrackId = preferredTrackId(session.ratingKey)
+                    val wantedTrackId = preferredTrackId(session.mediaId)
                     if (track == null || (wantedTrackId.isNotEmpty() && wantedTrackId != track.id)) {
-                        freshTracks = client.subtitleTracks(session.ratingKey)
-                        track = chooseTrack(session.ratingKey, freshTracks)
-                        freshTimeline = track?.let { client.subtitleTimeline(session.ratingKey, it) }
+                        freshTracks = provider.subtitleTracks(session.mediaId)
+                        track = chooseTrack(session.mediaId, freshTracks)
+                        freshTimeline = track?.let { provider.subtitleTimeline(session.mediaId, it) }
                     }
                 }
 
@@ -278,7 +437,9 @@ class MainActivity : Activity() {
                     )
                 }
             } catch (error: Exception) {
-                runOnUiThread { stateView.text = "Plex: ${friendlyError(error)}" }
+                runOnUiThread {
+                    stateView.text = "${provider.providerType.displayName}: ${friendlyError(error)}"
+                }
             } finally {
                 pollInFlight = false
             }
@@ -294,8 +455,8 @@ class MainActivity : Activity() {
         return items.firstOrNull { it.state.equals("playing", ignoreCase = true) } ?: items.first()
     }
 
-    private fun chooseTrack(ratingKey: String, available: List<SubtitleTrack>): SubtitleTrack? {
-        val manual = preferredTrackId(ratingKey)
+    private fun chooseTrack(mediaId: String, available: List<SubtitleTrack>): SubtitleTrack? {
+        val manual = preferredTrackId(mediaId)
         if (manual.isNotEmpty()) {
             available.firstOrNull { it.compatible && it.id == manual }?.let { return it }
         }
@@ -303,8 +464,15 @@ class MainActivity : Activity() {
         return available.firstOrNull { it.compatible && it.language.equals(language, ignoreCase = true) }
     }
 
-    private fun preferredTrackId(ratingKey: String): String =
-        preferences.getString("track_$ratingKey", "").orEmpty()
+    private fun preferredTrackId(mediaId: String): String {
+        val provider = mediaProvider?.providerType?.name ?: "UNKNOWN"
+        return preferences.getString("track_$provider_$mediaId", "").orEmpty()
+    }
+
+    private fun trackPreferenceKey(mediaId: String): String {
+        val provider = mediaProvider?.providerType?.name ?: "UNKNOWN"
+        return "track_$provider_$mediaId"
+    }
 
     private fun applyPlaybackState(
         freshSessions: List<PlaybackSession>,
@@ -319,7 +487,7 @@ class MainActivity : Activity() {
         tracks = freshTracks
         selectedTrack = track
         timeline = freshTimeline
-        loadedRatingKey = session.ratingKey
+        loadedMediaId = session.mediaId
 
         titleView.text = session.title
         stateView.text = "${session.displayClient()} · ${session.state}"
@@ -358,7 +526,7 @@ class MainActivity : Activity() {
 
     private fun showSessionChooser() {
         if (sessions.isEmpty()) {
-            Toast.makeText(this, "No Plex sessions available", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "No playback sessions available", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -367,7 +535,7 @@ class MainActivity : Activity() {
         val checked = sessions.indexOfFirst { it.playerId == saved }
 
         AlertDialog.Builder(this)
-            .setTitle("Plex session")
+            .setTitle("Playback session")
             .setSingleChoiceItems(labels, checked) { dialog, which ->
                 val item = sessions[which]
                 preferences.edit().putString(KEY_PLAYER_ID, item.playerId).apply()
@@ -388,7 +556,7 @@ class MainActivity : Activity() {
         }
 
         val compatible = tracks.filter { it.compatible }
-        val manual = preferredTrackId(session.ratingKey)
+        val manual = preferredTrackId(session.mediaId)
         val labels = buildList {
             add("Auto (${preferredLanguage().uppercase(Locale.US)})")
             compatible.forEach { add(it.label()) }
@@ -401,8 +569,8 @@ class MainActivity : Activity() {
             .setTitle("Subtitle track")
             .setSingleChoiceItems(labels, checked) { dialog, which ->
                 preferences.edit().apply {
-                    if (which == 0) remove("track_${session.ratingKey}")
-                    else putString("track_${session.ratingKey}", compatible[which - 1].id)
+                    if (which == 0) remove(trackPreferenceKey(session.mediaId))
+                    else putString(trackPreferenceKey(session.mediaId), compatible[which - 1].id)
                 }.apply()
                 selectedTrack = null
                 timeline = null
@@ -475,76 +643,95 @@ class MainActivity : Activity() {
         delayButton.text = String.format(Locale.US, "◷ %.1f", delay / 1000.0)
     }
 
-    private fun showSettings(required: Boolean) {
+    private fun showSettings() {
+        val provider = mediaProvider
+        if (provider == null) {
+            showProviderSetup(required = false)
+            return
+        }
+
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(8), dp(20), dp(4))
         }
 
-        val urlInput = input(preferences.getString(KEY_PLEX_URL, "").orEmpty()).apply {
-            hint = "http://192.168.1.50:32400"
-        }
-        val tokenInput = input(preferences.getString(KEY_PLEX_TOKEN, "").orEmpty()).apply {
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-        }
-        val languageInput = input(preferredLanguage()).apply { hint = "es" }
-
-        content.addView(label("Plex server URL"))
-        content.addView(urlInput)
-        content.addView(label("Plex token"))
-        content.addView(tokenInput)
+        content.addView(label("Media server"))
+        content.addView(valueText(provider.providerType.displayName))
+        content.addView(label("Connected server"))
+        content.addView(valueText(provider.serverName))
         content.addView(label("Preferred subtitle language"))
+
+        val languageInput = input(preferredLanguage()).apply { hint = "es" }
         content.addView(languageInput)
-        content.addView(
-            TextView(this).apply {
-                text = "SideSubs connects directly to Plex. Docker is not required."
-                setTextColor(0xFF999999.toInt())
-                textSize = 12f
-                setPadding(0, dp(10), 0, 0)
-            }
-        )
 
-        val scroll = ScrollView(this).apply { addView(content) }
-        val builder = AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setTitle("SideSubs settings")
-            .setView(scroll)
+            .setView(content)
             .setPositiveButton("Save", null)
-
-        if (!required) builder.setNegativeButton("Cancel", null)
-
-        val dialog = builder.create().apply {
-            setCancelable(!required)
-            setCanceledOnTouchOutside(!required)
-        }
+            .setNeutralButton("Change server", null)
+            .setNegativeButton("Sign out", null)
+            .create()
 
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val url = urlInput.text.toString().trim()
-                val token = tokenInput.text.toString().trim()
-                val language = languageInput.text.toString().trim().lowercase(Locale.US).ifBlank { "es" }
-
-                if (url.isBlank()) {
-                    urlInput.error = "Plex URL is required"
-                    return@setOnClickListener
-                }
-                if (token.isBlank()) {
-                    tokenInput.error = "Plex token is required"
-                    return@setOnClickListener
-                }
-
-                runCatching {
-                    preferences.edit()
-                        .putString(KEY_PLEX_URL, url)
-                        .putString(KEY_PLEX_TOKEN, token)
-                        .putString(KEY_LANGUAGE, language)
-                        .apply()
-                    configureClient(url, token)
-                    dialog.dismiss()
-                    handler.post(::startPolling)
-                }.onFailure { stateView.text = "Configuration error: ${friendlyError(it)}" }
+                val language = languageInput.text.toString()
+                    .trim()
+                    .lowercase(Locale.US)
+                    .ifBlank { "es" }
+                preferences.edit().putString(KEY_LANGUAGE, language).apply()
+                clearLoadedSubtitle()
+                dialog.dismiss()
+                pollOnce()
+            }
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                dialog.dismiss()
+                loadServerChooser()
+            }
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
+                dialog.dismiss()
+                confirmSignOut()
             }
         }
         dialog.show()
+    }
+
+    private fun loadServerChooser() {
+        stateView.text = "Loading Plex servers…"
+        executor.execute {
+            try {
+                val servers = plexAuth.listServers()
+                runOnUiThread {
+                    if (servers.isEmpty()) {
+                        stateView.text = "No Plex servers available"
+                    } else {
+                        showServerChooser(servers, required = false)
+                    }
+                }
+            } catch (error: Exception) {
+                runOnUiThread { stateView.text = "Plex: ${friendlyError(error)}" }
+            }
+        }
+    }
+
+    private fun confirmSignOut() {
+        AlertDialog.Builder(this)
+            .setTitle("Sign out of Plex?")
+            .setMessage("SideSubs will remove the saved Plex authorization and server selection from this device.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Sign out") { _, _ ->
+                stopPolling()
+                plexAuth.signOut()
+                mediaProvider = null
+                sessions = emptyList()
+                selectedSession = null
+                clearLoadedSubtitle()
+                titleView.text = "SideSubs"
+                stateView.text = "Choose a media server"
+                currentSubtitleView.text = ""
+                nextSubtitleView.text = ""
+                showProviderSetup(required = true)
+            }
+            .show()
     }
 
     private fun label(value: String) = TextView(this).apply {
@@ -552,6 +739,12 @@ class MainActivity : Activity() {
         setTextColor(Color.WHITE)
         textSize = 13f
         setPadding(0, dp(12), 0, dp(4))
+    }
+
+    private fun valueText(value: String) = TextView(this).apply {
+        text = value
+        setTextColor(0xFFCCCCCC.toInt())
+        textSize = 15f
     }
 
     private fun input(value: String) = EditText(this).apply {
@@ -566,11 +759,30 @@ class MainActivity : Activity() {
         preferences.getString(KEY_LANGUAGE, "es").orEmpty().ifBlank { "es" }
 
     private fun clearLoadedSubtitle() {
-        loadedRatingKey = ""
+        loadedMediaId = ""
         tracks = emptyList()
         selectedTrack = null
         timeline = null
-        plex?.clearSubtitleCache()
+        mediaProvider?.clearSubtitleCache()
+    }
+
+    private fun matchWrap() = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT,
+        LinearLayout.LayoutParams.WRAP_CONTENT,
+    )
+
+    private fun controlButton(label: String) = Button(this).apply {
+        text = label
+        setTextColor(Color.WHITE)
+        textSize = 12f
+        isAllCaps = false
+        isSingleLine = true
+        setBackgroundColor(Color.TRANSPARENT)
+        setPadding(dp(5), 0, dp(5), 0)
+    }
+
+    private fun addControl(button: Button, weight: Float) {
+        controls.addView(button, LinearLayout.LayoutParams(0, dp(46), weight))
     }
 
     private fun setCinemaMode(enabled: Boolean) {
@@ -723,12 +935,11 @@ class MainActivity : Activity() {
 
     private companion object {
         const val PREFS = "sidesubs_settings"
-        const val KEY_PLEX_URL = "plex_url"
-        const val KEY_PLEX_TOKEN = "plex_token"
         const val KEY_PLAYER_ID = "player_id"
         const val KEY_LANGUAGE = "preferred_language"
         const val KEY_DELAY_MS = "subtitle_delay_ms"
         const val KEY_LAST_CRASH = "last_crash"
         const val POLL_INTERVAL_MS = 750L
+        const val AUTH_POLL_INTERVAL_MS = 1_000L
     }
 }
