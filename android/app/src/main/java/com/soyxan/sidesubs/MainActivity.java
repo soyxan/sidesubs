@@ -29,6 +29,8 @@ import com.soyxan.sidesubs.PlexModels.PlaybackSession;
 import com.soyxan.sidesubs.PlexModels.SubtitleTimeline;
 import com.soyxan.sidesubs.PlexModels.SubtitleTrack;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -42,6 +44,7 @@ public class MainActivity extends Activity {
     private static final String KEY_PLAYER_ID = "player_id";
     private static final String KEY_LANGUAGE = "preferred_language";
     private static final String KEY_DELAY_MS = "subtitle_delay_ms";
+    private static final String KEY_LAST_CRASH = "last_crash";
     private static final long POLL_INTERVAL_MS = 750L;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -80,7 +83,9 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
+        installCrashRecorder();
         buildUi();
+        showRecordedCrashIfAny();
 
         String url = preferences.getString(KEY_PLEX_URL, "");
         String token = preferences.getString(KEY_PLEX_TOKEN, "");
@@ -540,15 +545,19 @@ public class MainActivity extends Activity {
                 }
                 if (isBlank(language)) language = "es";
 
-                preferences.edit()
-                    .putString(KEY_PLEX_URL, url)
-                    .putString(KEY_PLEX_TOKEN, token)
-                    .putString(KEY_LANGUAGE, language)
-                    .apply();
+                try {
+                    preferences.edit()
+                        .putString(KEY_PLEX_URL, url)
+                        .putString(KEY_PLEX_TOKEN, token)
+                        .putString(KEY_LANGUAGE, language)
+                        .apply();
 
-                configureClient(url, token);
-                dialog.dismiss();
-                startPolling();
+                    configureClient(url, token);
+                    dialog.dismiss();
+                    handler.post(this::startPolling);
+                } catch (Exception error) {
+                    stateView.setText("Configuration error: " + friendlyError(error));
+                }
             }));
         dialog.show();
     }
@@ -650,6 +659,40 @@ public class MainActivity extends Activity {
         } else {
             getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
         }
+    }
+
+    private void installCrashRecorder() {
+        Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler((thread, error) -> {
+            try {
+                StringWriter writer = new StringWriter();
+                error.printStackTrace(new PrintWriter(writer));
+                String trace = writer.toString();
+                if (trace.length() > 4000) trace = trace.substring(0, 4000);
+                preferences.edit().putString(KEY_LAST_CRASH, trace).commit();
+            } catch (Exception ignored) {
+            }
+            if (previous != null) {
+                previous.uncaughtException(thread, error);
+            }
+        });
+    }
+
+    private void showRecordedCrashIfAny() {
+        String crash = preferences.getString(KEY_LAST_CRASH, "");
+        if (crash == null || crash.isEmpty()) return;
+        preferences.edit().remove(KEY_LAST_CRASH).apply();
+
+        String summary = crash;
+        int newline = summary.indexOf('\n');
+        if (newline > 0) summary = summary.substring(0, newline);
+        stateView.setText("Previous crash: " + summary);
+
+        new AlertDialog.Builder(this)
+            .setTitle("SideSubs recovered from a crash")
+            .setMessage(crash)
+            .setPositiveButton("OK", null)
+            .show();
     }
 
     private String friendlyError(Exception error) {
