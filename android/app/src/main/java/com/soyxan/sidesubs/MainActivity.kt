@@ -919,7 +919,7 @@ class MainActivity : Activity() {
 
     private fun updateDelayDisplay() {
         val delay = if (::preferences.isInitialized) preferences.getInt(KEY_DELAY_MS, 1000) else 1000
-        delayButton.text = String.format(Locale.US, "%.2f", delay / 1000.0)
+        delayButton.text = ""
         if (::delayValueView.isInitialized) {
             delayValueView.text = String.format(Locale.US, "%.2f s", delay / 1000.0)
         }
@@ -1116,8 +1116,13 @@ class MainActivity : Activity() {
         isAllCaps = false
         isSingleLine = true
         setBackgroundColor(Color.TRANSPARENT)
-        setPadding(dp(5), 0, dp(5), 0)
-        compoundDrawablePadding = if (label.isBlank()) 0 else dp(6)
+        gravity = Gravity.CENTER
+        minWidth = 0
+        minimumWidth = 0
+        minHeight = 0
+        minimumHeight = 0
+        setPadding(dp(2), 0, dp(2), 0)
+        compoundDrawablePadding = if (label.isBlank()) 0 else dp(4)
         if (iconRes != 0) {
             setCompoundDrawablesRelativeWithIntrinsicBounds(iconRes, 0, 0, 0)
             compoundDrawableTintList = textColors
