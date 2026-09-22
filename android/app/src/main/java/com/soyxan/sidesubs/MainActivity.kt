@@ -1,0 +1,734 @@
+package com.soyxan.sidesubs
+
+import android.app.Activity
+import android.app.AlertDialog
+import android.content.SharedPreferences
+import android.content.pm.ActivityInfo
+import android.content.res.ColorStateList
+import android.content.res.Configuration
+import android.graphics.Color
+import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.text.InputType
+import android.view.Gravity
+import android.view.View
+import android.view.WindowInsets
+import android.view.WindowInsetsController
+import android.view.WindowManager
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Toast
+import java.io.PrintWriter
+import java.io.StringWriter
+import java.util.Locale
+import java.util.concurrent.Executors
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.roundToInt
+
+class MainActivity : Activity() {
+    private val handler = Handler(Looper.getMainLooper())
+    private val executor = Executors.newSingleThreadExecutor()
+    private val playbackClock = PlaybackClock()
+
+    private lateinit var preferences: SharedPreferences
+    private var plex: PlexClient? = null
+    @Volatile private var pollInFlight = false
+    private var cinemaMode = false
+    private var hideChromeTask: Runnable? = null
+
+    private lateinit var root: LinearLayout
+    private lateinit var topBar: LinearLayout
+    private lateinit var controls: LinearLayout
+    private lateinit var titleView: TextView
+    private lateinit var stateView: TextView
+    private lateinit var currentSubtitleView: TextView
+    private lateinit var nextSubtitleView: TextView
+    private lateinit var sessionButton: Button
+    private lateinit var subtitleButton: Button
+    private lateinit var delayButton: Button
+    private lateinit var settingsButton: Button
+    private lateinit var cinemaButton: Button
+
+    private var sessions: List<PlaybackSession> = emptyList()
+    private var tracks: List<SubtitleTrack> = emptyList()
+    private var selectedSession: PlaybackSession? = null
+    private var selectedTrack: SubtitleTrack? = null
+    private var timeline: SubtitleTimeline? = null
+    private var loadedRatingKey = ""
+
+    private val pollTask = object : Runnable {
+        override fun run() {
+            pollOnce()
+            handler.postDelayed(this, POLL_INTERVAL_MS)
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        preferences = getSharedPreferences(PREFS, MODE_PRIVATE)
+        installCrashRecorder()
+        buildUi()
+
+        val url = preferences.getString(KEY_PLEX_URL, "").orEmpty()
+        val token = preferences.getString(KEY_PLEX_TOKEN, "").orEmpty()
+        if (url.isBlank() || token.isBlank()) {
+            showRecordedCrashIfAny(null)
+            showSettings(required = true)
+        } else {
+            configureClient(url, token)
+            if (!showRecordedCrashIfAny(::startPolling)) startPolling()
+        }
+    }
+
+    private fun buildUi() {
+        root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.BLACK)
+            setPadding(dp(16), dp(12), dp(16), dp(10))
+            setOnClickListener { if (cinemaMode) showCinemaChromeTemporarily() }
+        }
+        applySafeAreaInsets()
+
+        topBar = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+        }
+
+        titleView = TextView(this).apply {
+            text = "SideSubs"
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            gravity = Gravity.CENTER
+            maxLines = 2
+        }
+        stateView = TextView(this).apply {
+            text = "Connecting to Plex…"
+            setTextColor(0xFF999999.toInt())
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setPadding(0, dp(4), 0, 0)
+        }
+        topBar.addView(titleView)
+        topBar.addView(stateView)
+        root.addView(
+            topBar,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+
+        val subtitleArea = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(12), dp(20), dp(12), dp(20))
+        }
+
+        currentSubtitleView = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 30f
+            gravity = Gravity.CENTER
+            setLineSpacing(0f, 1.08f)
+        }
+        nextSubtitleView = TextView(this).apply {
+            setTextColor(0xFF777777.toInt())
+            textSize = 19f
+            gravity = Gravity.CENTER
+            setPadding(0, dp(26), 0, 0)
+            setLineSpacing(0f, 1.06f)
+        }
+        subtitleArea.addView(currentSubtitleView, matchWrap())
+        subtitleArea.addView(nextSubtitleView, matchWrap())
+        root.addView(
+            subtitleArea,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f),
+        )
+
+        controls = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+
+        sessionButton = controlButton("📺 Session")
+        subtitleButton = controlButton("💬 Subtitles")
+        delayButton = controlButton("◷")
+        settingsButton = controlButton("⚙")
+        cinemaButton = controlButton("⛶")
+
+        sessionButton.setOnClickListener { showSessionChooser() }
+        subtitleButton.setOnClickListener { showSubtitleChooser() }
+        delayButton.setOnClickListener { showDelayChooser() }
+        settingsButton.setOnClickListener { showSettings(required = false) }
+        cinemaButton.setOnClickListener { setCinemaMode(!cinemaMode) }
+
+        addControl(sessionButton, 1.5f)
+        addControl(subtitleButton, 1.6f)
+        addControl(delayButton, 0.55f)
+        addControl(settingsButton, 0.55f)
+        addControl(cinemaButton, 0.55f)
+
+        root.addView(
+            controls,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(48)),
+        )
+
+        setContentView(root)
+        updateDelayButton()
+    }
+
+    private fun matchWrap() = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT,
+        LinearLayout.LayoutParams.WRAP_CONTENT,
+    )
+
+    private fun controlButton(label: String) = Button(this).apply {
+        text = label
+        setTextColor(Color.WHITE)
+        textSize = 12f
+        isAllCaps = false
+        isSingleLine = true
+        setBackgroundColor(Color.TRANSPARENT)
+        setPadding(dp(5), 0, dp(5), 0)
+    }
+
+    private fun addControl(button: Button, weight: Float) {
+        controls.addView(button, LinearLayout.LayoutParams(0, dp(46), weight))
+    }
+
+    private fun configureClient(url: String, token: String) {
+        runCatching {
+            PlexClient(url, token)
+        }.onSuccess { client ->
+            plex = client
+            playbackClock.clear()
+            clearLoadedSubtitle()
+            stateView.text = "Connecting to ${client.serverUrl}"
+        }.onFailure {
+            plex = null
+            stateView.text = "Invalid Plex configuration"
+        }
+    }
+
+    private fun startPolling() {
+        handler.removeCallbacks(pollTask)
+        handler.post(pollTask)
+    }
+
+    private fun pollOnce() {
+        val client = plex ?: return
+        if (pollInFlight) return
+        pollInFlight = true
+
+        executor.execute {
+            try {
+                val freshSessions = client.sessions()
+                val session = chooseSession(freshSessions)
+
+                if (session == null) {
+                    runOnUiThread {
+                        sessions = freshSessions
+                        selectedSession = null
+                        titleView.text = "SideSubs"
+                        stateView.text = "No active Plex session"
+                        currentSubtitleView.text = ""
+                        nextSubtitleView.text = ""
+                        sessionButton.text = "📺 Session"
+                    }
+                    return@execute
+                }
+
+                val position = playbackClock.smooth(
+                    session.clockKey(),
+                    session.position,
+                    session.state,
+                )
+
+                var freshTracks = tracks
+                var track = selectedTrack
+                var freshTimeline = timeline
+                val needsTimeline = session.ratingKey != loadedRatingKey
+
+                if (needsTimeline) {
+                    freshTracks = client.subtitleTracks(session.ratingKey)
+                    track = chooseTrack(session.ratingKey, freshTracks)
+                    freshTimeline = track?.let { client.subtitleTimeline(session.ratingKey, it) }
+                } else {
+                    val wantedTrackId = preferredTrackId(session.ratingKey)
+                    if (track == null || (wantedTrackId.isNotEmpty() && wantedTrackId != track.id)) {
+                        freshTracks = client.subtitleTracks(session.ratingKey)
+                        track = chooseTrack(session.ratingKey, freshTracks)
+                        freshTimeline = track?.let { client.subtitleTimeline(session.ratingKey, it) }
+                    }
+                }
+
+                runOnUiThread {
+                    applyPlaybackState(
+                        freshSessions,
+                        session,
+                        freshTracks,
+                        track,
+                        freshTimeline,
+                        position,
+                    )
+                }
+            } catch (error: Exception) {
+                runOnUiThread { stateView.text = "Plex: ${friendlyError(error)}" }
+            } finally {
+                pollInFlight = false
+            }
+        }
+    }
+
+    private fun chooseSession(items: List<PlaybackSession>): PlaybackSession? {
+        if (items.isEmpty()) return null
+        val selectedPlayerId = preferences.getString(KEY_PLAYER_ID, "").orEmpty()
+        if (selectedPlayerId.isNotBlank()) {
+            items.firstOrNull { it.playerId == selectedPlayerId }?.let { return it }
+        }
+        return items.firstOrNull { it.state.equals("playing", ignoreCase = true) } ?: items.first()
+    }
+
+    private fun chooseTrack(ratingKey: String, available: List<SubtitleTrack>): SubtitleTrack? {
+        val manual = preferredTrackId(ratingKey)
+        if (manual.isNotEmpty()) {
+            available.firstOrNull { it.compatible && it.id == manual }?.let { return it }
+        }
+        val language = preferredLanguage()
+        return available.firstOrNull { it.compatible && it.language.equals(language, ignoreCase = true) }
+    }
+
+    private fun preferredTrackId(ratingKey: String): String =
+        preferences.getString("track_$ratingKey", "").orEmpty()
+
+    private fun applyPlaybackState(
+        freshSessions: List<PlaybackSession>,
+        session: PlaybackSession,
+        freshTracks: List<SubtitleTrack>,
+        track: SubtitleTrack?,
+        freshTimeline: SubtitleTimeline?,
+        position: Double,
+    ) {
+        sessions = freshSessions
+        selectedSession = session
+        tracks = freshTracks
+        selectedTrack = track
+        timeline = freshTimeline
+        loadedRatingKey = session.ratingKey
+
+        titleView.text = session.title
+        stateView.text = "${session.displayClient()} · ${session.state}"
+        sessionButton.text = "📺 ${ellipsize(session.displayClient(), 13)}"
+        subtitleButton.text = if (track == null) {
+            "💬 No ${preferredLanguage().uppercase(Locale.US)}"
+        } else {
+            "💬 ${ellipsize(track.label(), 17)}"
+        }
+        subtitleButton.isEnabled = tracks.isNotEmpty()
+
+        val delayMs = preferences.getInt(KEY_DELAY_MS, 1000)
+        val effectivePosition = max(0.0, position - delayMs / 1000.0)
+        val (current, next) = cuePair(freshTimeline?.cues, effectivePosition)
+        currentSubtitleView.text = current?.text.orEmpty()
+        nextSubtitleView.text = next?.text.orEmpty()
+    }
+
+    private fun cuePair(cues: List<Cue>?, position: Double): Pair<Cue?, Cue?> {
+        if (cues == null) return null to null
+        var current: Cue? = null
+        var next: Cue? = null
+
+        for (cue in cues) {
+            if (cue.start <= position && position <= cue.end + 1.5) {
+                current = cue
+                continue
+            }
+            if (cue.start > position) {
+                next = cue
+                break
+            }
+        }
+        return current to next
+    }
+
+    private fun showSessionChooser() {
+        if (sessions.isEmpty()) {
+            Toast.makeText(this, "No Plex sessions available", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val saved = preferences.getString(KEY_PLAYER_ID, "").orEmpty()
+        val labels = sessions.map { "${it.displayClient()}\n${it.title}" }.toTypedArray()
+        val checked = sessions.indexOfFirst { it.playerId == saved }
+
+        AlertDialog.Builder(this)
+            .setTitle("Plex session")
+            .setSingleChoiceItems(labels, checked) { dialog, which ->
+                val item = sessions[which]
+                preferences.edit().putString(KEY_PLAYER_ID, item.playerId).apply()
+                playbackClock.clear()
+                clearLoadedSubtitle()
+                dialog.dismiss()
+                pollOnce()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showSubtitleChooser() {
+        val session = selectedSession
+        if (session == null || tracks.isEmpty()) {
+            Toast.makeText(this, "No subtitle tracks available", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val compatible = tracks.filter { it.compatible }
+        val manual = preferredTrackId(session.ratingKey)
+        val labels = buildList {
+            add("Auto (${preferredLanguage().uppercase(Locale.US)})")
+            compatible.forEach { add(it.label()) }
+        }.toTypedArray()
+        val checked = if (manual.isEmpty()) 0 else {
+            compatible.indexOfFirst { it.id == manual }.let { if (it >= 0) it + 1 else -1 }
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Subtitle track")
+            .setSingleChoiceItems(labels, checked) { dialog, which ->
+                preferences.edit().apply {
+                    if (which == 0) remove("track_${session.ratingKey}")
+                    else putString("track_${session.ratingKey}", compatible[which - 1].id)
+                }.apply()
+                selectedTrack = null
+                timeline = null
+                dialog.dismiss()
+                pollOnce()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showDelayChooser() {
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(8), dp(16), dp(4))
+        }
+
+        val minus = controlButton("−").apply { textSize = 24f }
+        val value = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 22f
+            gravity = Gravity.CENTER
+            minWidth = dp(120)
+        }
+        val plus = controlButton("+").apply { textSize = 24f }
+
+        var delay = preferences.getInt(KEY_DELAY_MS, 1000).coerceIn(0, 5000)
+        fun refresh() {
+            value.text = String.format(Locale.US, "%.2f s", delay / 1000.0)
+        }
+        refresh()
+
+        minus.setOnClickListener {
+            delay = max(0, delay - 250)
+            refresh()
+        }
+        plus.setOnClickListener {
+            delay = min(5000, delay + 250)
+            refresh()
+        }
+
+        content.addView(minus, LinearLayout.LayoutParams(dp(64), dp(52)))
+        content.addView(value, LinearLayout.LayoutParams(dp(130), dp(52)))
+        content.addView(plus, LinearLayout.LayoutParams(dp(64), dp(52)))
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Subtitle delay")
+            .setView(content)
+            .setNeutralButton("Reset", null)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Apply", null)
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                delay = 0
+                refresh()
+            }
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                preferences.edit().putInt(KEY_DELAY_MS, delay).apply()
+                updateDelayButton()
+                dialog.dismiss()
+            }
+        }
+        dialog.show()
+    }
+
+    private fun updateDelayButton() {
+        val delay = if (::preferences.isInitialized) preferences.getInt(KEY_DELAY_MS, 1000) else 1000
+        delayButton.text = String.format(Locale.US, "◷ %.1f", delay / 1000.0)
+    }
+
+    private fun showSettings(required: Boolean) {
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(4))
+        }
+
+        val urlInput = input(preferences.getString(KEY_PLEX_URL, "").orEmpty()).apply {
+            hint = "http://192.168.1.50:32400"
+        }
+        val tokenInput = input(preferences.getString(KEY_PLEX_TOKEN, "").orEmpty()).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        val languageInput = input(preferredLanguage()).apply { hint = "es" }
+
+        content.addView(label("Plex server URL"))
+        content.addView(urlInput)
+        content.addView(label("Plex token"))
+        content.addView(tokenInput)
+        content.addView(label("Preferred subtitle language"))
+        content.addView(languageInput)
+        content.addView(
+            TextView(this).apply {
+                text = "SideSubs connects directly to Plex. Docker is not required."
+                setTextColor(0xFF999999.toInt())
+                textSize = 12f
+                setPadding(0, dp(10), 0, 0)
+            }
+        )
+
+        val scroll = ScrollView(this).apply { addView(content) }
+        val builder = AlertDialog.Builder(this)
+            .setTitle("SideSubs settings")
+            .setView(scroll)
+            .setPositiveButton("Save", null)
+
+        if (!required) builder.setNegativeButton("Cancel", null)
+
+        val dialog = builder.create().apply {
+            setCancelable(!required)
+            setCanceledOnTouchOutside(!required)
+        }
+
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val url = urlInput.text.toString().trim()
+                val token = tokenInput.text.toString().trim()
+                val language = languageInput.text.toString().trim().lowercase(Locale.US).ifBlank { "es" }
+
+                if (url.isBlank()) {
+                    urlInput.error = "Plex URL is required"
+                    return@setOnClickListener
+                }
+                if (token.isBlank()) {
+                    tokenInput.error = "Plex token is required"
+                    return@setOnClickListener
+                }
+
+                runCatching {
+                    preferences.edit()
+                        .putString(KEY_PLEX_URL, url)
+                        .putString(KEY_PLEX_TOKEN, token)
+                        .putString(KEY_LANGUAGE, language)
+                        .apply()
+                    configureClient(url, token)
+                    dialog.dismiss()
+                    handler.post(::startPolling)
+                }.onFailure { stateView.text = "Configuration error: ${friendlyError(it)}" }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun label(value: String) = TextView(this).apply {
+        text = value
+        setTextColor(Color.WHITE)
+        textSize = 13f
+        setPadding(0, dp(12), 0, dp(4))
+    }
+
+    private fun input(value: String) = EditText(this).apply {
+        setSingleLine(true)
+        setText(value)
+        setTextColor(Color.WHITE)
+        setHintTextColor(0xFF666666.toInt())
+        backgroundTintList = ColorStateList.valueOf(0xFF888888.toInt())
+    }
+
+    private fun preferredLanguage(): String =
+        preferences.getString(KEY_LANGUAGE, "es").orEmpty().ifBlank { "es" }
+
+    private fun clearLoadedSubtitle() {
+        loadedRatingKey = ""
+        tracks = emptyList()
+        selectedTrack = null
+        timeline = null
+        plex?.clearSubtitleCache()
+    }
+
+    private fun setCinemaMode(enabled: Boolean) {
+        cinemaMode = enabled
+        if (enabled) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            enterImmersiveMode()
+            showCinemaChromeTemporarily()
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            exitImmersiveMode()
+            topBar.visibility = View.VISIBLE
+            controls.visibility = View.VISIBLE
+            hideChromeTask?.let(handler::removeCallbacks)
+        }
+        root.requestApplyInsets()
+    }
+
+    private fun showCinemaChromeTemporarily() {
+        if (!cinemaMode) return
+        topBar.visibility = View.VISIBLE
+        controls.visibility = View.VISIBLE
+        hideChromeTask?.let(handler::removeCallbacks)
+        hideChromeTask = Runnable {
+            if (cinemaMode) {
+                topBar.visibility = View.GONE
+                controls.visibility = View.GONE
+            }
+        }.also { handler.postDelayed(it, 2500) }
+    }
+
+    private fun applySafeAreaInsets() {
+        root.setOnApplyWindowInsetsListener { view, windowInsets ->
+            var topInset = 0
+            var bottomInset = 0
+
+            if (!cinemaMode) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    val insets = windowInsets.getInsets(
+                        WindowInsets.Type.statusBars() or
+                            WindowInsets.Type.navigationBars() or
+                            WindowInsets.Type.displayCutout()
+                    )
+                    topInset = insets.top
+                    bottomInset = insets.bottom
+                } else {
+                    @Suppress("DEPRECATION")
+                    run {
+                        topInset = windowInsets.systemWindowInsetTop
+                        bottomInset = windowInsets.systemWindowInsetBottom
+                    }
+                }
+            }
+
+            view.setPadding(dp(16), dp(12) + topInset, dp(16), dp(10) + bottomInset)
+            windowInsets
+        }
+        root.requestApplyInsets()
+    }
+
+    private fun enterImmersiveMode() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(false)
+            window.insetsController?.apply {
+                hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+                systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            run {
+                window.decorView.systemUiVisibility =
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                    View.SYSTEM_UI_FLAG_FULLSCREEN or
+                    View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                    View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+                    View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            }
+        }
+    }
+
+    private fun exitImmersiveMode() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(true)
+            window.insetsController?.show(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+        } else {
+            @Suppress("DEPRECATION")
+            run { window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE }
+        }
+    }
+
+    private fun installCrashRecorder() {
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+            runCatching {
+                val writer = StringWriter()
+                error.printStackTrace(PrintWriter(writer))
+                val trace = writer.toString().take(4000)
+                preferences.edit().putString(KEY_LAST_CRASH, trace).commit()
+            }
+            previous?.uncaughtException(thread, error)
+        }
+    }
+
+    private fun showRecordedCrashIfAny(onDismiss: (() -> Unit)?): Boolean {
+        val crash = preferences.getString(KEY_LAST_CRASH, "").orEmpty()
+        if (crash.isEmpty()) return false
+
+        preferences.edit().remove(KEY_LAST_CRASH).apply()
+        stateView.text = "Previous crash: ${crash.lineSequence().firstOrNull().orEmpty()}"
+
+        AlertDialog.Builder(this)
+            .setTitle("SideSubs recovered from a crash")
+            .setMessage(crash)
+            .setPositiveButton("OK") { _, _ -> onDismiss?.invoke() }
+            .setOnCancelListener { onDismiss?.invoke() }
+            .show()
+        return true
+    }
+
+    private fun friendlyError(error: Throwable): String {
+        val message = error.message?.trim().orEmpty()
+        return if (message.isBlank()) error.javaClass.simpleName else message.take(100).let {
+            if (message.length > 100) "$it…" else it
+        }
+    }
+
+    private fun ellipsize(value: String, max: Int): String =
+        if (value.length <= max) value else value.take(max - 1) + "…"
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (cinemaMode) enterImmersiveMode()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && cinemaMode) enterImmersiveMode()
+    }
+
+    override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
+        executor.shutdownNow()
+        super.onDestroy()
+    }
+
+    private companion object {
+        const val PREFS = "sidesubs_settings"
+        const val KEY_PLEX_URL = "plex_url"
+        const val KEY_PLEX_TOKEN = "plex_token"
+        const val KEY_PLAYER_ID = "player_id"
+        const val KEY_LANGUAGE = "preferred_language"
+        const val KEY_DELAY_MS = "subtitle_delay_ms"
+        const val KEY_LAST_CRASH = "last_crash"
+        const val POLL_INTERVAL_MS = 750L
+    }
+}
