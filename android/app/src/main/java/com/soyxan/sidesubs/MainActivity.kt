@@ -48,6 +48,7 @@ class MainActivity : Activity() {
     private var cinemaMode = false
     private var hideChromeTask: Runnable? = null
     private var setupDialog: AlertDialog? = null
+    private var setupStatusView: TextView? = null
 
     private lateinit var root: LinearLayout
     private lateinit var topBar: LinearLayout
@@ -107,7 +108,9 @@ class MainActivity : Activity() {
                 } catch (error: Exception) {
                     pendingPlexLogin = null
                     runOnUiThread {
-                        stateView.text = "Plex sign-in: ${friendlyError(error)}"
+                        val message = "Plex sign-in: ${friendlyError(error)}"
+                        stateView.text = message
+                        setupStatusView?.text = message
                         setupDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = true
                     }
                 } finally {
@@ -271,6 +274,7 @@ class MainActivity : Activity() {
             setPadding(0, dp(12), 0, 0)
         }
         content.addView(help)
+        setupStatusView = help
 
         val builder = AlertDialog.Builder(this)
             .setTitle("Connect SideSubs")
@@ -299,7 +303,10 @@ class MainActivity : Activity() {
             }
         }
         dialog.setOnDismissListener {
-            if (setupDialog === dialog) setupDialog = null
+            if (setupDialog === dialog) {
+                setupDialog = null
+                setupStatusView = null
+            }
         }
         dialog.show()
     }
