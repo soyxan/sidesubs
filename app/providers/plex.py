@@ -208,6 +208,121 @@ class PlexProvider(MediaProvider):
         )
         response.raise_for_status()
 
+    def debug_fetch_full_subtitle(self, session: PlaybackSession, track: SubtitleTrack) -> dict:
+        """Fetch one complete subtitle file through PMS HTTP transcoding.
+
+        Diagnostic only: this does not alter the normal SideSubs subtitle path.
+        """
+        if not track.compatible:
+            raise RuntimeError("Selected subtitle track is not a supported text format")
+
+        if track.source == "external" and track.provider_data.get("key"):
+            cues = self._fetch_external(session, track)
+            duration = float(getattr(session.native, "duration", 0) or 0) / 1000.0
+            return {
+                "mode": "external",
+                "track": track.as_dict(),
+                "bytes": None,
+                "cue_count": len(cues),
+                "first": (
+                    {"start": cues[0].start, "end": cues[0].end, "text": cues[0].text}
+                    if cues else None
+                ),
+                "last": (
+                    {"start": cues[-1].start, "end": cues[-1].end, "text": cues[-1].text}
+                    if cues else None
+                ),
+                "media_duration": duration or None,
+                "coverage": (cues[-1].end / duration) if cues and duration else None,
+            }
+
+        part_id = int(track.provider_data["part_id"])
+        stream_id = int(track.provider_data["stream_id"])
+        transcode_session = uuid.uuid4().hex[:24]
+        playback_session_id = uuid.uuid4().hex
+        headers = self._request_headers(playback_session_id)
+        params = {
+            "hasMDE": 1,
+            "path": f"/library/metadata/{session.rating_key}",
+            "mediaIndex": 0,
+            "partIndex": 0,
+            "protocol": "http",
+            "fastSeek": 1,
+            "directPlay": 1,
+            "directStream": 1,
+            "subtitleSize": 100,
+            "audioBoost": 100,
+            "location": "lan",
+            "directStreamAudio": 1,
+            "mediaBufferSize": 102400,
+            "session": transcode_session,
+            "subtitles": "sidecar",
+            "subtitleStreamID": stream_id,
+            "copyts": 1,
+            "offset": 0,
+            "X-Plex-Token": self.token,
+        }
+
+        with self._transcode_lock:
+            item = self._plex().fetchItem(int(session.rating_key))
+            media = list(getattr(item, "media", []) or [])
+            if not media or not getattr(media[0], "parts", None):
+                raise RuntimeError("Plex media item has no parts")
+            part = media[0].parts[0]
+            old_stream_id = self._selected_stream_id(part)
+            changed_global_selection = old_stream_id != stream_id
+
+            if changed_global_selection:
+                self._select_stream(part_id, stream_id)
+
+            try:
+                response = requests.get(
+                    f"{self.base_url}/subtitles/:/transcode/universal/start",
+                    params=params,
+                    headers=headers,
+                    timeout=(5, 30),
+                )
+                response.raise_for_status()
+                payload = response.content
+            finally:
+                if changed_global_selection:
+                    try:
+                        self._select_stream(part_id, old_stream_id)
+                    except Exception:
+                        logger.exception("Unable to restore Plex subtitle stream %s", old_stream_id)
+
+        text = payload.decode("utf-8", errors="replace")
+        cues = parse_timed_text(text)
+        duration = float(getattr(session.native, "duration", 0) or 0) / 1000.0
+        logger.info(
+            "Full subtitle diagnostic rating_key=%s stream=%s bytes=%s cues=%s first=%s last=%s duration=%.3f",
+            session.rating_key,
+            stream_id,
+            len(payload),
+            len(cues),
+            f"{cues[0].start:.3f}" if cues else "<none>",
+            f"{cues[-1].end:.3f}" if cues else "<none>",
+            duration,
+        )
+        return {
+            "mode": "plex_http_transcode",
+            "track": track.as_dict(),
+            "content_type": response.headers.get("content-type"),
+            "bytes": len(payload),
+            "cue_count": len(cues),
+            "first": (
+                {"start": cues[0].start, "end": cues[0].end, "text": cues[0].text}
+                if cues else None
+            ),
+            "last": (
+                {"start": cues[-1].start, "end": cues[-1].end, "text": cues[-1].text}
+                if cues else None
+            ),
+            "media_duration": duration or None,
+            "coverage": (cues[-1].end / duration) if cues and duration else None,
+            "sample_prefix": text[:300],
+        }
+
     def _fetch_external(self, session: PlaybackSession, track: SubtitleTrack) -> tuple[Cue, ...]:
         cache_key = (session.rating_key, track.id)
         with self._lock:
