@@ -85,15 +85,17 @@ public class MainActivity extends Activity {
         preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
         installCrashRecorder();
         buildUi();
-        showRecordedCrashIfAny();
 
         String url = preferences.getString(KEY_PLEX_URL, "");
         String token = preferences.getString(KEY_PLEX_TOKEN, "");
         if (isBlank(url) || isBlank(token)) {
+            showRecordedCrashIfAny(null);
             showSettings(true);
         } else {
             configureClient(url, token);
-            startPolling();
+            if (!showRecordedCrashIfAny(this::startPolling)) {
+                startPolling();
+            }
         }
     }
 
@@ -678,9 +680,9 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void showRecordedCrashIfAny() {
+    private boolean showRecordedCrashIfAny(Runnable onDismiss) {
         String crash = preferences.getString(KEY_LAST_CRASH, "");
-        if (crash == null || crash.isEmpty()) return;
+        if (crash == null || crash.isEmpty()) return false;
         preferences.edit().remove(KEY_LAST_CRASH).apply();
 
         String summary = crash;
@@ -691,8 +693,14 @@ public class MainActivity extends Activity {
         new AlertDialog.Builder(this)
             .setTitle("SideSubs recovered from a crash")
             .setMessage(crash)
-            .setPositiveButton("OK", null)
+            .setPositiveButton("OK", (dialog, which) -> {
+                if (onDismiss != null) onDismiss.run();
+            })
+            .setOnCancelListener(dialog -> {
+                if (onDismiss != null) onDismiss.run();
+            })
             .show();
+        return true;
     }
 
     private String friendlyError(Exception error) {
