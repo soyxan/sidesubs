@@ -12,7 +12,7 @@ final class SubtitleParser {
         "(\\d{1,2}):(\\d{2}):(\\d{2})[,.](\\d{1,3})\\s*-->\\s*" +
         "(\\d{1,2}):(\\d{2}):(\\d{2})[,.](\\d{1,3})"
     );
-    private static final Pattern ASS_TAG = Pattern.compile("\\{[^}]*}");
+    private static final Pattern ASS_TAG = Pattern.compile("\\{[^}]*\\}");
 
     private SubtitleParser() {}
 
