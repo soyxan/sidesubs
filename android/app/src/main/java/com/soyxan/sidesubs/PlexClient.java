@@ -330,7 +330,11 @@ final class PlexClient {
         if (status < 200 || status >= 300) {
             String detail = new String(payload, StandardCharsets.UTF_8);
             if (detail.length() > 300) detail = detail.substring(0, 300);
-            throw new IllegalStateException("Plex HTTP " + status + (detail.isEmpty() ? "" : ": " + detail));
+            String requestPath = path.startsWith("http") ? Uri.parse(path).getPath() : path;
+            throw new IllegalStateException(
+                "Plex HTTP " + status + " on " + requestPath
+                    + (detail.isEmpty() ? "" : ": " + detail)
+            );
         }
         return payload;
     }
@@ -356,8 +360,24 @@ final class PlexClient {
 
     private static String normalizeBaseUrl(String value) {
         String url = value == null ? "" : value.trim();
+        if (url.isEmpty()) return "";
         if (!url.matches("(?i)^https?://.*")) url = "http://" + url;
-        return url.replaceAll("/+$", "");
+
+        Uri uri = Uri.parse(url);
+        String scheme = uri.getScheme();
+        String host = uri.getHost();
+        if (scheme == null || host == null) return "";
+
+        String normalizedScheme = scheme.toLowerCase(Locale.US);
+        if (!normalizedScheme.equals("http") && !normalizedScheme.equals("https")) return "";
+
+        Uri.Builder builder = new Uri.Builder()
+            .scheme(normalizedScheme)
+            .encodedAuthority(uri.getPort() >= 0
+                ? host + ":" + uri.getPort()
+                : host);
+
+        return builder.build().toString();
     }
 
     private static String normalizeLanguage(String value) {
