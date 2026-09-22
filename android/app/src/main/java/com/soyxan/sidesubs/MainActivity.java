@@ -2,492 +2,620 @@ package com.soyxan.sidesubs;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.graphics.Color;
-import android.net.Uri;
-import android.net.http.SslError;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.InputType;
+import android.view.Gravity;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
-import android.view.inputmethod.InputMethodManager;
-import android.content.Context;
-import android.webkit.JavascriptInterface;
-import android.webkit.SslErrorHandler;
-import android.webkit.WebResourceError;
-import android.webkit.WebResourceRequest;
-import android.webkit.WebSettings;
-import android.webkit.WebView;
-import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
-import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
-import org.json.JSONObject;
+import com.soyxan.sidesubs.PlexModels.Cue;
+import com.soyxan.sidesubs.PlexModels.PlaybackSession;
+import com.soyxan.sidesubs.PlexModels.SubtitleTimeline;
+import com.soyxan.sidesubs.PlexModels.SubtitleTrack;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
     private static final String PREFS = "sidesubs_settings";
-    private static final String KEY_SERVER_URL = "server_url";
+    private static final String KEY_PLEX_URL = "plex_url";
+    private static final String KEY_PLEX_TOKEN = "plex_token";
+    private static final String KEY_PLAYER_ID = "player_id";
+    private static final String KEY_LANGUAGE = "preferred_language";
+    private static final String KEY_DELAY_MS = "subtitle_delay_ms";
+    private static final long POLL_INTERVAL_MS = 750L;
 
-    private static final long PAGE_READY_TIMEOUT_MS = 10_000L;
-    private static final int SERVER_CHECK_TIMEOUT_MS = 5_000;
-    private static final int SUPPORTED_API_VERSION = 1;
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private final PlaybackClock playbackClock = new PlaybackClock();
 
-    private WebView webView;
     private SharedPreferences preferences;
-    private boolean cinemaMode = false;
-    private final Handler readinessHandler = new Handler(Looper.getMainLooper());
-    private Runnable readinessTimeout;
-    private int loadGeneration = 0;
+    private PlexClient plex;
+    private boolean pollInFlight;
+    private boolean cinemaMode;
+    private boolean chromeVisible = true;
+    private Runnable hideChromeTask;
+
+    private LinearLayout root;
+    private LinearLayout topBar;
+    private LinearLayout controls;
+    private TextView titleView;
+    private TextView stateView;
+    private TextView currentSubtitleView;
+    private TextView nextSubtitleView;
+    private Button sessionButton;
+    private Button subtitleButton;
+    private Button delayButton;
+    private Button settingsButton;
+    private Button cinemaButton;
+
+    private List<PlaybackSession> sessions = new ArrayList<>();
+    private List<SubtitleTrack> tracks = new ArrayList<>();
+    private PlaybackSession selectedSession;
+    private SubtitleTrack selectedTrack;
+    private SubtitleTimeline timeline;
+    private String loadedRatingKey = "";
+    private String loadedTrackId = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
         preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
+        buildUi();
 
-        webView = new WebView(this);
-        webView.setBackgroundColor(Color.BLACK);
-        webView.setWebViewClient(new WebViewClient() {
-            @Override
-            public void onReceivedError(
-                WebView view,
-                WebResourceRequest request,
-                WebResourceError error
-            ) {
-                super.onReceivedError(view, request, error);
-                if (request.isForMainFrame()) {
-                    showConnectionError(
-                        "Cannot connect to SideSubs",
-                        "Check that the server address is correct and that SideSubs is running."
-                    );
-                }
-            }
-
-            @Override
-            public void onReceivedSslError(
-                WebView view,
-                SslErrorHandler handler,
-                SslError error
-            ) {
-                handler.cancel();
-                showConnectionError(
-                    "Secure connection failed",
-                    "This server may be using HTTP instead of HTTPS, or its certificate may not be valid."
-                );
-            }
-        });
-
-        WebSettings settings = webView.getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setDomStorageEnabled(true);
-        settings.setMediaPlaybackRequiresUserGesture(false);
-        webView.addJavascriptInterface(new SideSubsBridge(), "SideSubsAndroid");
-
-        LinearLayout initialView = new LinearLayout(this);
-        initialView.setBackgroundColor(Color.BLACK);
-        setContentView(initialView);
-        exitImmersiveMode();
-
-        String savedUrl = preferences.getString(KEY_SERVER_URL, "");
-        if (savedUrl == null || savedUrl.trim().isEmpty()) {
-            showServerSettings(true);
+        String url = preferences.getString(KEY_PLEX_URL, "");
+        String token = preferences.getString(KEY_PLEX_TOKEN, "");
+        if (isBlank(url) || isBlank(token)) {
+            showSettings(true);
         } else {
-            loadServer(savedUrl);
+            configureClient(url, token);
+            startPolling();
         }
     }
 
-    private void showConnectionError(String title, String message) {
-        cancelReadinessTimeout();
-        runOnUiThread(() -> {
-            String currentUrl = preferences.getString(KEY_SERVER_URL, "");
-
-            LinearLayout layout = new LinearLayout(this);
-            layout.setOrientation(LinearLayout.VERTICAL);
-            layout.setPadding(48, 64, 48, 48);
-            layout.setGravity(android.view.Gravity.CENTER);
-            layout.setBackgroundColor(Color.BLACK);
-
-            TextView iconView = new TextView(this);
-            iconView.setText("⚠");
-            iconView.setTextColor(0xFFFFC107);
-            iconView.setTextSize(56);
-            iconView.setGravity(android.view.Gravity.CENTER);
-            iconView.setPadding(0, 0, 0, 16);
-
-            TextView titleView = new TextView(this);
-            titleView.setText(title);
-            titleView.setTextColor(Color.WHITE);
-            titleView.setTextSize(22);
-            titleView.setGravity(android.view.Gravity.CENTER);
-            titleView.setPadding(0, 0, 0, 20);
-
-            TextView urlView = new TextView(this);
-            urlView.setText(currentUrl == null ? "" : currentUrl);
-            urlView.setTextColor(0xFFB0B0B0);
-            urlView.setTextSize(14);
-            urlView.setGravity(android.view.Gravity.CENTER);
-            urlView.setPadding(0, 0, 0, 18);
-
-            TextView messageView = new TextView(this);
-            messageView.setText(message);
-            messageView.setTextColor(0xFFD0D0D0);
-            messageView.setTextSize(15);
-            messageView.setGravity(android.view.Gravity.CENTER);
-            messageView.setPadding(0, 0, 0, 30);
-
-            Button retryButton = new Button(this);
-            retryButton.setText("Retry");
-            retryButton.setOnClickListener(view -> {
-                if (currentUrl != null && !currentUrl.isEmpty()) {
-                    loadServer(currentUrl);
-                }
-            });
-
-            Button changeButton = new Button(this);
-            changeButton.setText("Change server");
-            changeButton.setOnClickListener(view -> showServerSettings(false));
-
-            layout.addView(iconView);
-            layout.addView(titleView);
-            layout.addView(urlView);
-            layout.addView(messageView);
-            layout.addView(retryButton);
-            layout.addView(changeButton);
-
-            setContentView(layout);
-            setCinemaMode(false);
+    private void buildUi() {
+        root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(Color.BLACK);
+        root.setPadding(dp(16), dp(12), dp(16), dp(10));
+        root.setOnClickListener(v -> {
+            if (cinemaMode) showCinemaChromeTemporarily();
         });
-    }
 
-    private void showServerSettings(boolean required) {
-        int horizontalPadding = dp(24);
-        int verticalPadding = dp(8);
+        topBar = new LinearLayout(this);
+        topBar.setOrientation(LinearLayout.VERTICAL);
+        topBar.setGravity(Gravity.CENTER_HORIZONTAL);
 
-        LinearLayout content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(horizontalPadding, verticalPadding, horizontalPadding, dp(4));
+        titleView = new TextView(this);
+        titleView.setText("SideSubs");
+        titleView.setTextColor(Color.WHITE);
+        titleView.setTextSize(16);
+        titleView.setGravity(Gravity.CENTER);
+        titleView.setMaxLines(2);
 
-        TextView sectionTitle = new TextView(this);
-        sectionTitle.setText("Server");
-        sectionTitle.setTextColor(Color.WHITE);
-        sectionTitle.setTextSize(14);
-        sectionTitle.setTypeface(null, android.graphics.Typeface.BOLD);
-        sectionTitle.setPadding(0, dp(4), 0, dp(6));
+        stateView = new TextView(this);
+        stateView.setText("Connecting to Plex…");
+        stateView.setTextColor(0xFF999999);
+        stateView.setTextSize(12);
+        stateView.setGravity(Gravity.CENTER);
+        stateView.setPadding(0, dp(4), 0, 0);
 
-        TextView fieldLabel = new TextView(this);
-        fieldLabel.setText("SideSubs server URL");
-        fieldLabel.setTextColor(0xFFD8D8D8);
-        fieldLabel.setTextSize(13);
-        fieldLabel.setPadding(0, 0, 0, dp(6));
-
-        final EditText input = new EditText(this);
-        input.setSingleLine(true);
-        input.setHint("http://192.168.1.50:8085");
-        input.setText(preferences.getString(KEY_SERVER_URL, ""));
-        input.setSelectAllOnFocus(false);
-        input.setTextColor(Color.WHITE);
-        input.setHintTextColor(0xFF777777);
-        input.setTextSize(15);
-        input.setPadding(dp(12), dp(10), dp(12), dp(10));
-
-        TextView helper = new TextView(this);
-        helper.setText("Address of the SideSubs web interface. HTTP and HTTPS are supported.");
-        helper.setTextColor(0xFF9E9E9E);
-        helper.setTextSize(12);
-        helper.setLineSpacing(0, 1.12f);
-        helper.setPadding(0, dp(7), 0, dp(4));
-
-        content.addView(sectionTitle);
-        content.addView(fieldLabel);
-        content.addView(input, new LinearLayout.LayoutParams(
+        topBar.addView(titleView);
+        topBar.addView(stateView);
+        root.addView(topBar, new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT
         ));
-        content.addView(helper);
 
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.addView(content);
+        LinearLayout subtitleArea = new LinearLayout(this);
+        subtitleArea.setOrientation(LinearLayout.VERTICAL);
+        subtitleArea.setGravity(Gravity.CENTER);
+        subtitleArea.setPadding(dp(12), dp(20), dp(12), dp(20));
 
-        AlertDialog.Builder builder = new AlertDialog.Builder(this)
-            .setTitle("App settings")
-            .setView(scroll)
-            .setPositiveButton("Save", null);
+        currentSubtitleView = new TextView(this);
+        currentSubtitleView.setText("");
+        currentSubtitleView.setTextColor(Color.WHITE);
+        currentSubtitleView.setTextSize(30);
+        currentSubtitleView.setGravity(Gravity.CENTER);
+        currentSubtitleView.setLineSpacing(0, 1.08f);
 
-        if (!required) {
-            builder.setNegativeButton("Cancel", null);
+        nextSubtitleView = new TextView(this);
+        nextSubtitleView.setText("");
+        nextSubtitleView.setTextColor(0xFF777777);
+        nextSubtitleView.setTextSize(19);
+        nextSubtitleView.setGravity(Gravity.CENTER);
+        nextSubtitleView.setPadding(0, dp(26), 0, 0);
+        nextSubtitleView.setLineSpacing(0, 1.06f);
+
+        subtitleArea.addView(currentSubtitleView, new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
+        subtitleArea.addView(nextSubtitleView, new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
+
+        root.addView(subtitleArea, new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            0,
+            1f
+        ));
+
+        controls = new LinearLayout(this);
+        controls.setOrientation(LinearLayout.HORIZONTAL);
+        controls.setGravity(Gravity.CENTER);
+
+        sessionButton = controlButton("📺 Session");
+        subtitleButton = controlButton("💬 Subtitles");
+        delayButton = controlButton("◷");
+        settingsButton = controlButton("⚙");
+        cinemaButton = controlButton("⛶");
+
+        sessionButton.setOnClickListener(v -> showSessionChooser());
+        subtitleButton.setOnClickListener(v -> showSubtitleChooser());
+        delayButton.setOnClickListener(v -> showDelayChooser());
+        settingsButton.setOnClickListener(v -> showSettings(false));
+        cinemaButton.setOnClickListener(v -> setCinemaMode(!cinemaMode));
+
+        addControl(sessionButton, 1.5f);
+        addControl(subtitleButton, 1.6f);
+        addControl(delayButton, 0.55f);
+        addControl(settingsButton, 0.55f);
+        addControl(cinemaButton, 0.55f);
+
+        root.addView(controls, new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            dp(48)
+        ));
+
+        setContentView(root);
+        updateDelayButton();
+    }
+
+    private Button controlButton(String text) {
+        Button button = new Button(this);
+        button.setText(text);
+        button.setTextColor(Color.WHITE);
+        button.setTextSize(12);
+        button.setAllCaps(false);
+        button.setSingleLine(true);
+        button.setBackgroundColor(Color.TRANSPARENT);
+        button.setPadding(dp(5), 0, dp(5), 0);
+        return button;
+    }
+
+    private void addControl(Button button, float weight) {
+        controls.addView(button, new LinearLayout.LayoutParams(0, dp(46), weight));
+    }
+
+    private void configureClient(String url, String token) {
+        try {
+            plex = new PlexClient(url, token);
+            playbackClock.clear();
+            clearLoadedSubtitle();
+            stateView.setText("Connecting to " + plex.serverUrl());
+        } catch (Exception error) {
+            plex = null;
+            stateView.setText("Invalid Plex configuration");
         }
+    }
 
-        AlertDialog dialog = builder.create();
-        dialog.setCanceledOnTouchOutside(!required);
-        dialog.setCancelable(!required);
+    private void startPolling() {
+        handler.removeCallbacks(pollTask);
+        handler.post(pollTask);
+    }
 
-        dialog.setOnShowListener(ignored -> {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
-                String normalized = normalizeUrl(input.getText().toString());
-                if (normalized == null) {
-                    input.setError("Enter a valid HTTP or HTTPS URL");
+    private final Runnable pollTask = new Runnable() {
+        @Override
+        public void run() {
+            pollOnce();
+            handler.postDelayed(this, POLL_INTERVAL_MS);
+        }
+    };
+
+    private void pollOnce() {
+        if (plex == null || pollInFlight) return;
+        pollInFlight = true;
+
+        executor.execute(() -> {
+            try {
+                List<PlaybackSession> freshSessions = plex.sessions();
+                PlaybackSession session = chooseSession(freshSessions);
+
+                if (session == null) {
+                    runOnUiThread(() -> {
+                        sessions = freshSessions;
+                        selectedSession = null;
+                        titleView.setText("SideSubs");
+                        stateView.setText("No active Plex session");
+                        currentSubtitleView.setText("");
+                        nextSubtitleView.setText("");
+                        sessionButton.setText("📺 Session");
+                    });
                     return;
                 }
 
-                preferences.edit().putString(KEY_SERVER_URL, normalized).apply();
-                dialog.dismiss();
-                loadServer(normalized);
-            });
+                double position = playbackClock.smooth(
+                    session.clockKey(),
+                    session.position,
+                    session.state
+                );
 
-            input.requestFocus();
-            input.postDelayed(() -> {
-                InputMethodManager keyboard =
-                    (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
-                if (keyboard != null) {
-                    keyboard.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT);
+                boolean needsTimeline = !session.ratingKey.equals(loadedRatingKey);
+                List<SubtitleTrack> freshTracks = tracks;
+                SubtitleTrack track = selectedTrack;
+                SubtitleTimeline freshTimeline = timeline;
+
+                if (needsTimeline) {
+                    freshTracks = plex.subtitleTracks(session.ratingKey);
+                    track = chooseTrack(session.ratingKey, freshTracks);
+                    freshTimeline = track == null ? null : plex.subtitleTimeline(session.ratingKey, track);
+                } else {
+                    String wantedTrackId = preferredTrackId(session.ratingKey);
+                    if (track == null || (!wantedTrackId.isEmpty() && !wantedTrackId.equals(track.id))) {
+                        freshTracks = plex.subtitleTracks(session.ratingKey);
+                        track = chooseTrack(session.ratingKey, freshTracks);
+                        freshTimeline = track == null ? null : plex.subtitleTimeline(session.ratingKey, track);
+                    }
                 }
-            }, 150);
-        });
 
-        dialog.setOnDismissListener(ignored -> applyCinemaUi());
-        dialog.show();
-    }
+                final List<PlaybackSession> uiSessions = freshSessions;
+                final List<SubtitleTrack> uiTracks = freshTracks;
+                final PlaybackSession uiSession = session;
+                final SubtitleTrack uiTrack = track;
+                final SubtitleTimeline uiTimeline = freshTimeline;
+                final double uiPosition = position;
 
-    private int dp(int value) {
-        return Math.round(value * getResources().getDisplayMetrics().density);
-    }
-
-    private class SideSubsBridge {
-        @JavascriptInterface
-        public boolean isNativeApp() {
-            return true;
-        }
-
-        @JavascriptInterface
-        public String getAppVersion() {
-            try {
-                return getPackageManager()
-                    .getPackageInfo(getPackageName(), 0)
-                    .versionName;
+                runOnUiThread(() -> applyPlaybackState(
+                    uiSessions,
+                    uiSession,
+                    uiTracks,
+                    uiTrack,
+                    uiTimeline,
+                    uiPosition
+                ));
             } catch (Exception error) {
-                return "Unknown";
+                runOnUiThread(() -> stateView.setText("Plex: " + friendlyError(error)));
+            } finally {
+                pollInFlight = false;
+            }
+        });
+    }
+
+    private PlaybackSession chooseSession(List<PlaybackSession> items) {
+        if (items == null || items.isEmpty()) return null;
+
+        String selectedPlayerId = preferences.getString(KEY_PLAYER_ID, "");
+        if (!isBlank(selectedPlayerId)) {
+            for (PlaybackSession session : items) {
+                if (selectedPlayerId.equals(session.playerId)) return session;
             }
         }
 
-        @JavascriptInterface
-        public void enterCinemaMode() {
-            runOnUiThread(() -> setCinemaMode(true));
+        for (PlaybackSession session : items) {
+            if ("playing".equalsIgnoreCase(session.state)) return session;
+        }
+        return items.get(0);
+    }
+
+    private SubtitleTrack chooseTrack(String ratingKey, List<SubtitleTrack> available) {
+        String manual = preferredTrackId(ratingKey);
+        if (!manual.isEmpty()) {
+            for (SubtitleTrack track : available) {
+                if (track.compatible && manual.equals(track.id)) return track;
+            }
         }
 
-        @JavascriptInterface
-        public void exitCinemaMode() {
-            runOnUiThread(() -> setCinemaMode(false));
+        String language = preferences.getString(KEY_LANGUAGE, "es");
+        for (SubtitleTrack track : available) {
+            if (track.compatible && language.equalsIgnoreCase(track.language)) return track;
+        }
+        return null;
+    }
+
+    private String preferredTrackId(String ratingKey) {
+        return preferences.getString("track_" + ratingKey, "");
+    }
+
+    private void applyPlaybackState(
+        List<PlaybackSession> freshSessions,
+        PlaybackSession session,
+        List<SubtitleTrack> freshTracks,
+        SubtitleTrack track,
+        SubtitleTimeline freshTimeline,
+        double position
+    ) {
+        sessions = freshSessions;
+        selectedSession = session;
+        tracks = freshTracks;
+        selectedTrack = track;
+        timeline = freshTimeline;
+        loadedRatingKey = session.ratingKey;
+        loadedTrackId = track == null ? "" : track.id;
+
+        titleView.setText(session.title);
+        stateView.setText(session.displayClient() + " · " + session.state);
+        sessionButton.setText("📺 " + ellipsize(session.displayClient(), 13));
+        subtitleButton.setText(track == null ? "💬 No " + preferredLanguage().toUpperCase(Locale.US)
+            : "💬 " + ellipsize(track.label(), 17));
+        subtitleButton.setEnabled(!tracks.isEmpty());
+
+        int delayMs = preferences.getInt(KEY_DELAY_MS, 1000);
+        double effectivePosition = Math.max(0, position - delayMs / 1000.0);
+        Cue[] pair = cuePair(freshTimeline == null ? null : freshTimeline.cues, effectivePosition);
+        currentSubtitleView.setText(pair[0] == null ? "" : pair[0].text);
+        nextSubtitleView.setText(pair[1] == null ? "" : pair[1].text);
+    }
+
+    private Cue[] cuePair(List<Cue> cues, double position) {
+        Cue current = null;
+        Cue next = null;
+        if (cues == null) return new Cue[]{null, null};
+
+        for (Cue cue : cues) {
+            if (cue.start <= position && position <= cue.end + 1.5) {
+                current = cue;
+                continue;
+            }
+            if (cue.start > position) {
+                next = cue;
+                break;
+            }
+        }
+        if (current != null && next == current) next = null;
+        return new Cue[]{current, next};
+    }
+
+    private void showSessionChooser() {
+        if (sessions.isEmpty()) {
+            Toast.makeText(this, "No Plex sessions available", Toast.LENGTH_SHORT).show();
+            return;
         }
 
-        @JavascriptInterface
-        public void openAppSettings() {
-            runOnUiThread(() -> showServerSettings(false));
+        String[] labels = new String[sessions.size()];
+        int checked = -1;
+        String saved = preferences.getString(KEY_PLAYER_ID, "");
+        for (int i = 0; i < sessions.size(); i++) {
+            PlaybackSession item = sessions.get(i);
+            labels[i] = item.displayClient() + "\n" + item.title;
+            if (item.playerId.equals(saved)) checked = i;
         }
 
-        @JavascriptInterface
-        public void pageReady() {
-            runOnUiThread(() -> {
-                cancelReadinessTimeout();
-                setContentView(webView);
-                applyCinemaUi();
-            });
+        new AlertDialog.Builder(this)
+            .setTitle("Plex session")
+            .setSingleChoiceItems(labels, checked, (dialog, which) -> {
+                PlaybackSession item = sessions.get(which);
+                preferences.edit().putString(KEY_PLAYER_ID, item.playerId).apply();
+                playbackClock.clear();
+                clearLoadedSubtitle();
+                dialog.dismiss();
+                pollOnce();
+            })
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+
+    private void showSubtitleChooser() {
+        if (selectedSession == null || tracks.isEmpty()) {
+            Toast.makeText(this, "No subtitle tracks available", Toast.LENGTH_SHORT).show();
+            return;
         }
+
+        List<SubtitleTrack> compatible = new ArrayList<>();
+        for (SubtitleTrack track : tracks) if (track.compatible) compatible.add(track);
+
+        String[] labels = new String[compatible.size() + 1];
+        labels[0] = "Auto (" + preferredLanguage().toUpperCase(Locale.US) + ")";
+        String manual = preferredTrackId(selectedSession.ratingKey);
+        int checked = manual.isEmpty() ? 0 : -1;
+        for (int i = 0; i < compatible.size(); i++) {
+            labels[i + 1] = compatible.get(i).label();
+            if (compatible.get(i).id.equals(manual)) checked = i + 1;
+        }
+
+        new AlertDialog.Builder(this)
+            .setTitle("Subtitle track")
+            .setSingleChoiceItems(labels, checked, (dialog, which) -> {
+                SharedPreferences.Editor edit = preferences.edit();
+                if (which == 0) {
+                    edit.remove("track_" + selectedSession.ratingKey);
+                } else {
+                    edit.putString("track_" + selectedSession.ratingKey, compatible.get(which - 1).id);
+                }
+                edit.apply();
+                loadedTrackId = "";
+                selectedTrack = null;
+                timeline = null;
+                dialog.dismiss();
+                pollOnce();
+            })
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+
+    private void showDelayChooser() {
+        final int step = 250;
+        final int max = 5000;
+        int count = max / step + 1;
+        String[] labels = new String[count];
+        int current = preferences.getInt(KEY_DELAY_MS, 1000);
+        int checked = Math.max(0, Math.min(count - 1, Math.round(current / (float) step)));
+        for (int i = 0; i < count; i++) {
+            labels[i] = String.format(Locale.US, "%.2f s", (i * step) / 1000.0);
+        }
+
+        new AlertDialog.Builder(this)
+            .setTitle("Subtitle delay")
+            .setSingleChoiceItems(labels, checked, (dialog, which) -> {
+                preferences.edit().putInt(KEY_DELAY_MS, which * step).apply();
+                updateDelayButton();
+                dialog.dismiss();
+            })
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+
+    private void updateDelayButton() {
+        int delay = preferences == null ? 1000 : preferences.getInt(KEY_DELAY_MS, 1000);
+        delayButton.setText(String.format(Locale.US, "◷ %.1f", delay / 1000.0));
+    }
+
+    private void showSettings(boolean required) {
+        int pad = dp(20);
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(pad, dp(8), pad, dp(4));
+
+        TextView urlLabel = label("Plex server URL");
+        EditText urlInput = input(preferences.getString(KEY_PLEX_URL, ""));
+        urlInput.setHint("http://192.168.1.50:32400");
+
+        TextView tokenLabel = label("Plex token");
+        EditText tokenInput = input(preferences.getString(KEY_PLEX_TOKEN, ""));
+        tokenInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+
+        TextView languageLabel = label("Preferred subtitle language");
+        EditText languageInput = input(preferredLanguage());
+        languageInput.setHint("es");
+
+        content.addView(urlLabel);
+        content.addView(urlInput);
+        content.addView(tokenLabel);
+        content.addView(tokenInput);
+        content.addView(languageLabel);
+        content.addView(languageInput);
+
+        TextView hint = new TextView(this);
+        hint.setText("SideSubs connects directly to Plex. Docker is not required.");
+        hint.setTextColor(0xFF999999);
+        hint.setTextSize(12);
+        hint.setPadding(0, dp(10), 0, 0);
+        content.addView(hint);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(content);
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this)
+            .setTitle("SideSubs settings")
+            .setView(scroll)
+            .setPositiveButton("Save", null);
+
+        if (!required) builder.setNegativeButton("Cancel", null);
+
+        AlertDialog dialog = builder.create();
+        dialog.setCancelable(!required);
+        dialog.setCanceledOnTouchOutside(!required);
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            .setOnClickListener(v -> {
+                String url = urlInput.getText().toString().trim();
+                String token = tokenInput.getText().toString().trim();
+                String language = languageInput.getText().toString().trim().toLowerCase(Locale.US);
+                if (isBlank(url)) {
+                    urlInput.setError("Plex URL is required");
+                    return;
+                }
+                if (isBlank(token)) {
+                    tokenInput.setError("Plex token is required");
+                    return;
+                }
+                if (isBlank(language)) language = "es";
+
+                preferences.edit()
+                    .putString(KEY_PLEX_URL, url)
+                    .putString(KEY_PLEX_TOKEN, token)
+                    .putString(KEY_LANGUAGE, language)
+                    .apply();
+
+                configureClient(url, token);
+                dialog.dismiss();
+                startPolling();
+            }));
+        dialog.show();
+    }
+
+    private TextView label(String text) {
+        TextView label = new TextView(this);
+        label.setText(text);
+        label.setTextColor(Color.WHITE);
+        label.setTextSize(13);
+        label.setPadding(0, dp(12), 0, dp(4));
+        return label;
+    }
+
+    private EditText input(String value) {
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setText(value == null ? "" : value);
+        input.setTextColor(Color.WHITE);
+        input.setHintTextColor(0xFF666666);
+        input.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF888888));
+        return input;
+    }
+
+    private String preferredLanguage() {
+        return preferences.getString(KEY_LANGUAGE, "es");
+    }
+
+    private void clearLoadedSubtitle() {
+        loadedRatingKey = "";
+        loadedTrackId = "";
+        tracks = new ArrayList<>();
+        selectedTrack = null;
+        timeline = null;
+        if (plex != null) plex.clearSubtitleCache();
     }
 
     private void setCinemaMode(boolean enabled) {
         cinemaMode = enabled;
-
         if (enabled) {
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
             enterImmersiveMode();
+            showCinemaChromeTemporarily();
         } else {
             getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
             exitImmersiveMode();
+            chromeVisible = true;
+            topBar.setVisibility(View.VISIBLE);
+            controls.setVisibility(View.VISIBLE);
+            if (hideChromeTask != null) handler.removeCallbacks(hideChromeTask);
         }
     }
 
-    private void applyCinemaUi() {
-        if (cinemaMode) {
-            enterImmersiveMode();
-        } else {
-            exitImmersiveMode();
-        }
-    }
-
-    private String normalizeUrl(String value) {
-        String url = value == null ? "" : value.trim();
-        if (url.isEmpty()) {
-            return null;
-        }
-
-        if (!url.matches("(?i)^https?://.*")) {
-            url = "http://" + url;
-        }
-
-        Uri uri = Uri.parse(url);
-        String scheme = uri.getScheme();
-        if (scheme == null ||
-            (!scheme.equalsIgnoreCase("http") && !scheme.equalsIgnoreCase("https")) ||
-            uri.getHost() == null) {
-            return null;
-        }
-
-        return url.replaceAll("/+$", "");
-    }
-
-    private void loadServer(String url) {
-        final int requestGeneration = ++loadGeneration;
-        showConnecting(url);
-
-        new Thread(() -> {
-            try {
-                URL infoUrl = new URL(url + "/api/app-info");
-                HttpURLConnection connection = (HttpURLConnection) infoUrl.openConnection();
-                connection.setRequestMethod("GET");
-                connection.setConnectTimeout(SERVER_CHECK_TIMEOUT_MS);
-                connection.setReadTimeout(SERVER_CHECK_TIMEOUT_MS);
-                connection.setUseCaches(false);
-                connection.setInstanceFollowRedirects(false);
-
-                int statusCode = connection.getResponseCode();
-                if (statusCode != HttpURLConnection.HTTP_OK) {
-                    connection.disconnect();
-                    showServerValidationError(
-                        requestGeneration,
-                        "Not a SideSubs server",
-                        "The server responded, but /api/app-info did not return a valid SideSubs response."
-                    );
-                    return;
-                }
-
-                StringBuilder body = new StringBuilder();
-                try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(connection.getInputStream())
-                )) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        body.append(line);
-                    }
-                } finally {
-                    connection.disconnect();
-                }
-
-                JSONObject payload = new JSONObject(body.toString());
-                String appName = payload.optString("app", "");
-                int apiVersion = payload.optInt("api_version", -1);
-
-                if (!"SideSubs".equals(appName)) {
-                    showServerValidationError(
-                        requestGeneration,
-                        "Not a SideSubs server",
-                        "The address is reachable, but it does not identify itself as SideSubs."
-                    );
-                    return;
-                }
-
-                if (apiVersion != SUPPORTED_API_VERSION) {
-                    showServerValidationError(
-                        requestGeneration,
-                        "Incompatible SideSubs server",
-                        "This app requires SideSubs API " + SUPPORTED_API_VERSION
-                            + ", but the server provides API " + apiVersion + "."
-                    );
-                    return;
-                }
-
-                runOnUiThread(() -> {
-                    if (requestGeneration != loadGeneration) {
-                        return;
-                    }
-                    startReadinessTimeout();
-                    webView.loadUrl(url);
-                });
-            } catch (Exception error) {
-                showServerValidationError(
-                    requestGeneration,
-                    "Cannot connect to SideSubs",
-                    "The server could not be verified. Check the address, network connection and that SideSubs is running."
-                );
-            }
-        }).start();
-    }
-
-    private void showServerValidationError(int requestGeneration, String title, String message) {
-        runOnUiThread(() -> {
-            if (requestGeneration != loadGeneration) {
-                return;
-            }
-            showConnectionError(title, message);
-        });
-    }
-
-    private void showConnecting(String url) {
-        runOnUiThread(() -> {
-            LinearLayout layout = new LinearLayout(this);
-            layout.setOrientation(LinearLayout.VERTICAL);
-            layout.setGravity(android.view.Gravity.CENTER);
-            layout.setPadding(48, 64, 48, 48);
-            layout.setBackgroundColor(Color.BLACK);
-
-            ProgressBar spinner = new ProgressBar(this);
-            LinearLayout.LayoutParams spinnerParams = new LinearLayout.LayoutParams(64, 64);
-            spinnerParams.bottomMargin = 28;
-            spinner.setLayoutParams(spinnerParams);
-
-            TextView titleView = new TextView(this);
-            titleView.setText("Connecting to SideSubs Server");
-            titleView.setTextColor(Color.WHITE);
-            titleView.setTextSize(20);
-            titleView.setGravity(android.view.Gravity.CENTER);
-            titleView.setPadding(0, 0, 0, 12);
-
-            TextView urlView = new TextView(this);
-            urlView.setText(url == null ? "" : url);
-            urlView.setTextColor(0xFF9E9E9E);
-            urlView.setTextSize(14);
-            urlView.setGravity(android.view.Gravity.CENTER);
-
-            layout.addView(spinner);
-            layout.addView(titleView);
-            layout.addView(urlView);
-
-            setContentView(layout);
-            setCinemaMode(false);
-        });
-    }
-
-    private void startReadinessTimeout() {
-        cancelReadinessTimeout();
-        readinessTimeout = () -> showConnectionError(
-            "SideSubs did not start",
-            "The server responded, but the SideSubs interface did not become ready. Check the server address and try again."
-        );
-        readinessHandler.postDelayed(readinessTimeout, PAGE_READY_TIMEOUT_MS);
-    }
-
-    private void cancelReadinessTimeout() {
-        if (readinessTimeout != null) {
-            readinessHandler.removeCallbacks(readinessTimeout);
-            readinessTimeout = null;
-        }
+    private void showCinemaChromeTemporarily() {
+        if (!cinemaMode) return;
+        chromeVisible = true;
+        topBar.setVisibility(View.VISIBLE);
+        controls.setVisibility(View.VISIBLE);
+        if (hideChromeTask != null) handler.removeCallbacks(hideChromeTask);
+        hideChromeTask = () -> {
+            if (!cinemaMode) return;
+            chromeVisible = false;
+            topBar.setVisibility(View.GONE);
+            controls.setVisibility(View.GONE);
+        };
+        handler.postDelayed(hideChromeTask, 2500);
     }
 
     private void enterImmersiveMode() {
@@ -524,42 +652,43 @@ public class MainActivity extends Activity {
         }
     }
 
+    private String friendlyError(Exception error) {
+        String message = error.getMessage();
+        if (message == null || message.trim().isEmpty()) return error.getClass().getSimpleName();
+        if (message.length() > 100) return message.substring(0, 100) + "…";
+        return message;
+    }
+
+    private String ellipsize(String value, int max) {
+        if (value == null) return "";
+        if (value.length() <= max) return value;
+        return value.substring(0, Math.max(1, max - 1)) + "…";
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        applyCinemaUi();
+        if (cinemaMode) enterImmersiveMode();
     }
 
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        if (hasFocus) {
-            applyCinemaUi();
-        }
-    }
-
-    @Override
-    protected void onResume() {
-        super.onResume();
-        applyCinemaUi();
-    }
-
-    @Override
-    @SuppressWarnings("deprecation")
-    public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) {
-            webView.goBack();
-        } else {
-            super.onBackPressed();
-        }
+        if (hasFocus && cinemaMode) enterImmersiveMode();
     }
 
     @Override
     protected void onDestroy() {
-        cancelReadinessTimeout();
-        if (webView != null) {
-            webView.destroy();
-        }
+        handler.removeCallbacksAndMessages(null);
+        executor.shutdownNow();
         super.onDestroy();
     }
 }
