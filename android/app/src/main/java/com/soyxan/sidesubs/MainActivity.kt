@@ -16,6 +16,8 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.transition.AutoTransition
+import android.transition.TransitionManager
 import android.view.Gravity
 import android.view.View
 import android.view.WindowInsets
@@ -1044,24 +1046,33 @@ class MainActivity : Activity() {
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             exitImmersiveMode()
-            topBar.visibility = View.VISIBLE
-            controls.visibility = View.VISIBLE
             hideChromeTask?.let(handler::removeCallbacks)
+            setChromeVisible(true, animate = false)
         }
         root.requestApplyInsets()
     }
 
     private fun showCinemaChromeTemporarily() {
         if (!cinemaMode) return
-        topBar.visibility = View.VISIBLE
-        controls.visibility = View.VISIBLE
+        setChromeVisible(true)
         hideChromeTask?.let(handler::removeCallbacks)
         hideChromeTask = Runnable {
-            if (cinemaMode) {
-                topBar.visibility = View.GONE
-                controls.visibility = View.GONE
-            }
+            if (cinemaMode) setChromeVisible(false)
         }.also { handler.postDelayed(it, 2500) }
+    }
+
+    private fun setChromeVisible(visible: Boolean, animate: Boolean = true) {
+        val target = if (visible) View.VISIBLE else View.GONE
+        if (topBar.visibility == target && controls.visibility == target) return
+        TransitionManager.endTransitions(root)
+        if (animate) {
+            TransitionManager.beginDelayedTransition(
+                root,
+                AutoTransition().apply { duration = 220L },
+            )
+        }
+        topBar.visibility = target
+        controls.visibility = target
     }
 
     private fun applySafeAreaInsets() {
