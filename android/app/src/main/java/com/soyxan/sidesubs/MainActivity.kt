@@ -27,6 +27,7 @@ import android.widget.TextView
 import android.widget.Toast
 import java.io.PrintWriter
 import java.io.StringWriter
+import java.io.IOException
 import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.math.max
@@ -44,7 +45,8 @@ class MainActivity : Activity() {
 
     @Volatile private var pollInFlight = false
     @Volatile private var authPollInFlight = false
-    private var pendingPlexLogin: PlexPendingLogin? = null
+    @Volatile private var pendingPlexLogin: PlexPendingLogin? = null
+    @Volatile private var plexLoginAuthorized = false
     private var cinemaMode = false
     private var hideChromeTask: Runnable? = null
     private var setupDialog: AlertDialog? = null
@@ -88,30 +90,44 @@ class MainActivity : Activity() {
             authPollInFlight = true
             executor.execute {
                 try {
-                    val token = plexAuth.pollLogin(pending)
-                    if (token != null) {
-                        pendingPlexLogin = null
-                        val servers = plexAuth.listServers()
-                        runOnUiThread {
-                            setupDialog?.dismiss()
-                            setupDialog = null
-                            if (servers.isEmpty()) {
-                                stateView.text = "Plex account has no available media servers"
-                                showProviderSetup(required = true)
-                            } else {
-                                showServerChooser(servers, required = true)
-                            }
+                    if (!plexLoginAuthorized) {
+                        val token = plexAuth.pollLogin(pending)
+                        if (token == null) {
+                            handler.postDelayed(this, AUTH_POLL_INTERVAL_MS)
+                            return@execute
                         }
-                    } else {
-                        handler.postDelayed(this, AUTH_POLL_INTERVAL_MS)
+                        plexLoginAuthorized = true
+                        runOnUiThread { setupStatusView?.text = "Signed in. Finding your Plex server…" }
+                    }
+
+                    val servers = plexAuth.listServers()
+                    pendingPlexLogin = null
+                    plexLoginAuthorized = false
+                    runOnUiThread {
+                        setupDialog?.dismiss()
+                        if (servers.isEmpty()) {
+                            showProviderSetup(
+                                required = true,
+                                message = "No Plex Media Servers found in your account.",
+                            )
+                        } else {
+                            showServerChooser(servers, required = true)
+                        }
                     }
                 } catch (error: Exception) {
-                    pendingPlexLogin = null
-                    runOnUiThread {
-                        val message = "Plex sign-in: ${friendlyError(error)}"
-                        stateView.text = message
-                        setupStatusView?.text = message
-                        setupDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = true
+                    if (error is IOException) {
+                        runOnUiThread {
+                            setupStatusView?.text =
+                                "Cannot reach Plex right now. Retrying automatically…"
+                        }
+                        handler.postDelayed(this, NETWORK_RETRY_INTERVAL_MS)
+                    } else {
+                        pendingPlexLogin = null
+                        plexLoginAuthorized = false
+                        runOnUiThread {
+                            setupStatusView?.text = "Plex sign-in: ${friendlyAuthError(error)}"
+                            setupDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = true
+                        }
                     }
                 } finally {
                     authPollInFlight = false
@@ -241,14 +257,13 @@ class MainActivity : Activity() {
                 runOnUiThread { connectProvider(connection) }
             } catch (error: Exception) {
                 runOnUiThread {
-                    stateView.text = "Connection: ${friendlyError(error)}"
-                    showProviderSetup(required = true)
+                    showProviderSetup(required = true, message = "Connection: ${friendlyAuthError(error)}")
                 }
             }
         }
     }
 
-    private fun showProviderSetup(required: Boolean) {
+    private fun showProviderSetup(required: Boolean, message: String? = null) {
         if (isFinishing) return
         setupDialog?.dismiss()
 
@@ -268,7 +283,7 @@ class MainActivity : Activity() {
         content.addView(spinner)
 
         val help = TextView(this).apply {
-            text = "Choose the media server platform. SideSubs will use that provider's own sign-in flow."
+            text = message ?: "Choose the media server platform. SideSubs will use that provider's own sign-in flow."
             setTextColor(0xFF999999.toInt())
             textSize = 12f
             setPadding(0, dp(12), 0, 0)
@@ -296,6 +311,9 @@ class MainActivity : Activity() {
                 when (providerType) {
                     MediaProviderType.PLEX -> {
                         signIn.isEnabled = false
+                        handler.removeCallbacks(authPollTask)
+                        pendingPlexLogin = null
+                        plexLoginAuthorized = false
                         help.text = "Opening Plex sign-in…"
                         beginPlexSignIn(help, signIn)
                     }
@@ -325,7 +343,8 @@ class MainActivity : Activity() {
                 }
             } catch (error: Exception) {
                 runOnUiThread {
-                    status.text = "Plex sign-in: ${friendlyError(error)}"
+                    pendingPlexLogin = null
+                    status.text = "Plex sign-in: ${friendlyAuthError(error)}"
                     button.isEnabled = true
                 }
             }
@@ -912,6 +931,14 @@ class MainActivity : Activity() {
         return true
     }
 
+    private fun friendlyAuthError(error: Throwable): String {
+        if (error is IOException) return "Cannot reach Plex. Check your connection and try again."
+        if (error.message?.contains("HTTP 401") == true) {
+            return "Plex did not accept the sign-in. Please try again."
+        }
+        return friendlyError(error)
+    }
+
     private fun friendlyError(error: Throwable): String {
         val message = error.message?.trim().orEmpty()
         return if (message.isBlank()) error.javaClass.simpleName else message.take(100).let {
@@ -948,5 +975,6 @@ class MainActivity : Activity() {
         const val KEY_LAST_CRASH = "last_crash"
         const val POLL_INTERVAL_MS = 750L
         const val AUTH_POLL_INTERVAL_MS = 1_000L
+        const val NETWORK_RETRY_INTERVAL_MS = 3_000L
     }
 }
