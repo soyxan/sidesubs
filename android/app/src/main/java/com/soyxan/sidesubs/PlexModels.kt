@@ -13,30 +13,31 @@ data class PlaybackSession(
     val device: String,
     val state: String,
     val title: String,
-    val ratingKey: String,
+    val mediaId: String,
     val sessionKey: String,
     val position: Double,
 ) {
-    fun displayClient(): String = client.ifBlank { product.ifBlank { device.ifBlank { "Plex" } } }
-    fun clockKey(): String = "$playerId:$ratingKey:$sessionKey"
+    fun displayClient(): String = client.ifBlank { product.ifBlank { device.ifBlank { "Media client" } } }
+    fun clockKey(): String = "$playerId:$mediaId:$sessionKey"
 }
 
 data class SubtitleTrack(
-    val streamId: Int,
-    val partId: Int,
+    val id: String,
     val source: String,
     val language: String,
     val title: String,
     val codec: String,
-    val key: String,
     val compatible: Boolean,
     val selected: Boolean,
+    val providerData: Map<String, String> = emptyMap(),
 ) {
-    val id: String = "plex:$streamId"
-
     fun label(): String {
         val lang = language.takeIf { it.isNotBlank() }?.uppercase()?.plus(" · ") ?: ""
-        val kind = if (source == "external") "External" else "MKV"
+        val kind = when (source) {
+            "external" -> "External"
+            "embedded" -> "Embedded"
+            else -> source.replaceFirstChar { it.uppercase() }
+        }
         return "$lang$kind · $title"
     }
 }
