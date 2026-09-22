@@ -125,6 +125,15 @@ class PlexAuthManager(
 
         val payload = requestBytes("GET", url, null, token)
         val array = JSONArray(payload.toString(StandardCharsets.UTF_8))
+        // Plex currently returns JWTs in resources for JWT accounts, while PMS
+        // may only accept the legacy server token exposed by /api/v2/devices.
+        val needsServerTokens = (0 until array.length()).any { index ->
+            val resource = array.optJSONObject(index) ?: return@any false
+            resource.optString("provides").split(",").any {
+                it.trim().equals("server", ignoreCase = true)
+            } && isJwt(jsonString(resource, "accessToken"))
+        }
+        val deviceTokens = if (needsServerTokens) loadServerTokens(token) else emptyMap()
 
         val servers = buildList {
             for (i in 0 until array.length()) {
@@ -132,14 +141,18 @@ class PlexAuthManager(
                 val provides = item.optString("provides")
                 if (!provides.split(",").any { it.trim().equals("server", ignoreCase = true) }) continue
 
-                val accessToken = jsonString(item, "accessToken")
-                if (accessToken.isBlank()) continue
-
                 val id = firstNonBlank(
                     item.optString("clientIdentifier"),
                     item.optString("machineIdentifier"),
                 )
                 if (id.isBlank()) continue
+                val resourceToken = jsonString(item, "accessToken")
+                val accessToken = if (isJwt(resourceToken)) deviceTokens[id].orEmpty()
+                    else resourceToken
+                if (accessToken.isBlank()) {
+                    diagnostics.add("Server resource has no usable PMS token")
+                    continue
+                }
 
                 val connectionsJson = item.optJSONArray("connections") ?: JSONArray()
                 val connections = buildList {
@@ -174,6 +187,24 @@ class PlexAuthManager(
         }
         return servers
     }
+
+    private fun loadServerTokens(accountToken: String): Map<String, String> {
+        diagnostics.add("Requesting Plex device tokens for PMS")
+        val payload = requestBytes("GET", "$PLEX_CLIENTS/api/v2/devices", null, accountToken)
+        val devices = JSONArray(payload.toString(StandardCharsets.UTF_8))
+        val tokens = buildMap {
+            for (index in 0 until devices.length()) {
+                val device = devices.optJSONObject(index) ?: continue
+                val id = jsonString(device, "clientIdentifier")
+                val token = jsonString(device, "token")
+                if (id.isNotBlank() && token.isNotBlank() && !isJwt(token)) put(id, token)
+            }
+        }
+        diagnostics.add("Plex devices returned ${tokens.size} PMS-compatible token(s)")
+        return tokens
+    }
+
+    private fun isJwt(token: String): Boolean = token.count { it == '.' } == 2
 
     fun selectServer(server: PlexServerResource): ProviderConnection {
         val connection = bestConnection(server)
