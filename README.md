@@ -20,7 +20,7 @@ SideSubs is designed primarily for trusted home-LAN use.
 - No media filesystem mount required by SideSubs.
 - Custom mobile-friendly selectors for sessions, tracks and language.
 - Cinema mode optimized for subtitle viewing.
-- Native Android companion app.
+- Native standalone Android app that connects directly to Plex.
 - Docker deployment with no database, webhooks or reverse proxy required.
 
 ## Architecture
@@ -155,15 +155,17 @@ In **Cinema mode**, the interface is optimized for landscape viewing. The status
 
 ## Android app
 
-SideSubs includes a small native Android client in the `android/` directory.
+SideSubs includes a native standalone Android client in the `android/` directory.
 
-The Android application is unchanged by this backend refactor. It still connects to the Docker/web SideSubs server. A standalone native Android implementation that talks directly to a media server is intentionally deferred; the provider-neutral backend architecture is preparation for that future work, not part of this change.
+The Android app does **not** require the Docker/web SideSubs server. It connects directly to Plex Media Server over HTTP, discovers active Plex sessions and subtitle tracks, fetches complete embedded text subtitles through Plex HTTP subtitle transcoding, caches the parsed cue timeline in memory, and synchronizes current/next subtitles from Plex playback position.
 
-On first launch, enter the address of your SideSubs server, for example:
+On first launch, configure the Plex server URL and Plex token, for example:
 
 ```text
-http://192.168.1.50:8085
+http://192.168.1.50:32400
 ```
+
+The Android app stores its Plex connection settings, preferred subtitle language, selected player, per-title subtitle choice and delay locally on the device. Cinema mode keeps the screen awake and switches to immersive landscape viewing.
 
 ### Android releases
 
