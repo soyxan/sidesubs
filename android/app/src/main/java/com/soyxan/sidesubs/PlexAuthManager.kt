@@ -94,8 +94,8 @@ class PlexAuthManager(
 
         val response = requestJson("GET", url, null, null)
         val token = firstNonBlank(
-            response.optString("authToken"),
-            response.optString("auth_token"),
+            jsonString(response, "authToken"),
+            jsonString(response, "auth_token"),
         )
         if (token.isBlank()) return null
 
@@ -124,7 +124,7 @@ class PlexAuthManager(
                 val provides = item.optString("provides")
                 if (!provides.split(",").any { it.trim().equals("server", ignoreCase = true) }) continue
 
-                val accessToken = item.optString("accessToken")
+                val accessToken = jsonString(item, "accessToken")
                 if (accessToken.isBlank()) continue
 
                 val id = firstNonBlank(
@@ -230,8 +230,8 @@ class PlexAuthManager(
             token = null,
         )
         val newToken = firstNonBlank(
-            refreshed.optString("auth_token"),
-            refreshed.optString("authToken"),
+            jsonString(refreshed, "auth_token"),
+            jsonString(refreshed, "authToken"),
         )
         check(newToken.isNotBlank()) { "Plex did not return a refreshed token" }
 
@@ -383,6 +383,9 @@ class PlexAuthManager(
         if (value.isBlank()) ByteArray(0)
         else Base64.decode(value, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
     }.getOrDefault(ByteArray(0))
+
+    private fun jsonString(json: JSONObject, key: String): String =
+        if (json.isNull(key)) "" else json.optString(key)
 
     private fun firstNonBlank(vararg values: String): String =
         values.firstOrNull { it.isNotBlank() }.orEmpty()
