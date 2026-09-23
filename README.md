@@ -8,9 +8,9 @@ I built SideSubs for a simple reason: I usually watch movies and TV shows in the
 
 I wanted a way to keep the English subtitles on the TV while having Spanish — my native language — available on a phone or tablet as a second, synchronized subtitle track. That is what SideSubs does.
 
-**SideSubs** is an Android-first second-screen subtitle companion for Plex, built for bilingual subtitle viewing. It works with any supported subtitle language, not just English and Spanish.
+**SideSubs** is an Android-first second-screen subtitle companion for Plex and Jellyfin, built for bilingual subtitle viewing. It works with any supported subtitle language, not just English and Spanish.
 
-It is designed for situations where you want to watch Plex on a TV while reading a second subtitle language on a phone or tablet. The subtitle shown by SideSubs is independent from the subtitle selected in the Plex player, so both can be used at the same time.
+It is designed for situations where you want to watch content from Plex or Jellyfin on a TV while reading a second subtitle language on a phone or tablet. The subtitle shown by SideSubs is independent from the subtitle selected in the media player, so both can be used at the same time.
 
 The native Android app is the main SideSubs application. A Docker/Web client is also available as an experimental alternative.
 
@@ -20,10 +20,10 @@ The native Android app is the main SideSubs application. A Docker/Web client is 
 
 ## Features
 
-- Connects directly to Plex.
-- Uses the official Plex sign-in flow.
-- Discovers available Plex Media Servers automatically.
-- Follows the active Plex playback session.
+- Connects directly to Plex and Jellyfin.
+- Uses the official Plex sign-in flow and Jellyfin Quick Connect.
+- Discovers Plex Media Servers automatically and connects to Jellyfin servers by URL.
+- Follows active Plex and Jellyfin playback sessions.
 - Shows synchronized subtitles on a second screen.
 - Keeps SideSubs subtitle selection independent from the Plex player subtitle.
 - Supports external and embedded text subtitles.
@@ -40,13 +40,13 @@ The native Android app is the main SideSubs application. A Docker/Web client is 
 
 The Android application is standalone and does **not** require the Docker service.
 
-On first launch, SideSubs signs in to Plex, discovers the Plex Media Servers associated with the account and connects to the selected server. No Plex token or server URL needs to be entered manually.
+On first launch, SideSubs lets you choose Plex or Jellyfin. Plex uses its account sign-in flow and automatic server discovery. Jellyfin connects to a server URL and authenticates through Quick Connect. Tokens are stored internally and do not need to be copied into the app manually.
 
-Once connected, SideSubs detects active playback sessions, retrieves subtitle tracks from Plex and synchronizes the selected subtitle with playback.
+Once connected, SideSubs detects active playback sessions, retrieves subtitle tracks from the selected media server and synchronizes the chosen subtitle with playback.
 
 ### Subtitle support
 
-SideSubs can use subtitle tracks exposed by Plex, including:
+SideSubs can use text subtitle tracks exposed by Plex or Jellyfin, including:
 
 - SRT / SubRip
 - ASS / SSA
@@ -82,12 +82,12 @@ If SideSubs is sent to the background and then reopened while Cinema mode is act
 
 ## How it works
 
-1. SideSubs connects to Plex.
+1. SideSubs connects to Plex or Jellyfin.
 2. It detects active playback sessions.
 3. It reads the current media item and available subtitle tracks.
 4. It selects a subtitle using the preferred language or a manual track choice.
 5. It retrieves and parses the subtitle timeline.
-6. It follows the Plex playback position and renders the synchronized current and next subtitle.
+6. It follows the media-server playback position and renders the synchronized current and next subtitle.
 7. Subtitle delay is applied locally without changing Plex playback.
 
 If the selected Plex session disappears, SideSubs does not silently switch to another player.
@@ -100,13 +100,13 @@ The Android application uses a provider-neutral media interface:
 MediaProvider
     |
     +-- PlexClient          (implemented)
-    +-- JellyfinProvider    (future)
+    +-- JellyfinClient      (implemented)
     +-- EmbyProvider        (future)
 ```
 
 The UI works with generic playback and subtitle models, while Plex-specific identifiers remain inside the Plex provider.
 
-Only Plex is currently implemented.
+Plex and Jellyfin are currently implemented.
 
 ## Docker / Web client — experimental
 
@@ -186,7 +186,7 @@ Never commit your Plex token to GitHub.
 
 ### Android
 
-- Plex authorization is stored internally on the device.
+- Plex and Jellyfin authorization is stored internally on the device.
 - Tokens are never shown in the UI.
 - Diagnostic logs do not contain tokens, credentials or subtitle text.
 - SideSubs does not require filesystem access to the Plex media library.
