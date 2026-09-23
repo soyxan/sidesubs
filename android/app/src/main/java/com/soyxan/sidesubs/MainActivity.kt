@@ -498,6 +498,18 @@ class MainActivity : Activity() {
                 plexLoginAuthorized = false
             }
 
+            fun resetPlexLoginUi() {
+                cancelPlexLogin()
+                copyCode.visibility = View.GONE
+                cancel.visibility = if (required) View.GONE else View.VISIBLE
+                help.text = defaultHelp
+                signIn.text =
+                    if (plexAuth.hasAccountToken()) "Find Plex servers" else "Sign in with Plex"
+                signIn.isEnabled = true
+                setupSignInAgainButton?.visibility =
+                    if (plexAuth.hasAccountToken()) View.VISIBLE else View.GONE
+            }
+
             fun resetJellyfinLoginUi() {
                 jellyfinLoginGeneration++
                 handler.removeCallbacks(jellyfinAuthPollTask)
@@ -517,7 +529,10 @@ class MainActivity : Activity() {
             fun refreshProviderUi() {
                 val providerType = providers[spinner.selectedItemPosition]
                 if (providerType != MediaProviderType.JELLYFIN) resetJellyfinLoginUi()
-                if (providerType != MediaProviderType.PLEX && pendingPlexLogin != null) cancelPlexLogin()
+                if (
+                    providerType != MediaProviderType.PLEX &&
+                    (pendingPlexLogin != null || !signIn.isEnabled)
+                ) resetPlexLoginUi()
                 val jellyfin = providerType == MediaProviderType.JELLYFIN
                 jellyfinUrlLabel.visibility = if (jellyfin) View.VISIBLE else View.GONE
                 jellyfinUrlInput.visibility = if (jellyfin) View.VISIBLE else View.GONE
@@ -548,13 +563,14 @@ class MainActivity : Activity() {
 
             cancel.setOnClickListener {
                 val providerType = providers[spinner.selectedItemPosition]
-                if (
+                when {
                     providerType == MediaProviderType.JELLYFIN &&
-                    (pendingJellyfinLogin != null || !signIn.isEnabled)
-                ) {
-                    resetJellyfinLoginUi()
-                } else if (!required) {
-                    dialog.dismiss()
+                        (pendingJellyfinLogin != null || !signIn.isEnabled) ->
+                        resetJellyfinLoginUi()
+                    providerType == MediaProviderType.PLEX &&
+                        (pendingPlexLogin != null || !signIn.isEnabled) ->
+                        resetPlexLoginUi()
+                    !required -> dialog.dismiss()
                 }
             }
 
@@ -575,6 +591,7 @@ class MainActivity : Activity() {
                             loadServerChooser(required = required)
                         } else {
                             signIn.isEnabled = false
+                            cancel.visibility = View.VISIBLE
                             cancelPlexLogin()
                             help.text = "Opening Plex sign-in…"
                             val generation = ++plexLoginGeneration
