@@ -184,6 +184,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         preferences = getSharedPreferences(PREFS, MODE_PRIVATE)
         diagnostics = DiagnosticLog(this)
         plexAuth = PlexAuthManager(preferences, diagnostics)
