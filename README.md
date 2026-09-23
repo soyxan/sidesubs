@@ -1,6 +1,29 @@
 # SideSubs
 
+[![Latest Release](https://img.shields.io/github/v/release/soyxan/sidesubs?label=release)](https://github.com/soyxan/sidesubs/releases/latest)
+[![Android Build](https://github.com/soyxan/sidesubs/actions/workflows/build-android.yml/badge.svg)](https://github.com/soyxan/sidesubs/actions/workflows/build-android.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white)](https://github.com/soyxan/sidesubs/releases/latest)
+
 **English** · [Español](README.es.md)
+
+**SideSubs** is an Android second-screen subtitle companion for Plex and Jellyfin. Keep one subtitle language on your TV and a second, synchronized language on your phone or tablet.
+
+## Download & install
+
+[**Download SideSubs for Android (latest APK)**](https://github.com/soyxan/sidesubs/releases/latest/download/SideSubs-latest.apk)
+
+You can also browse the [latest release](https://github.com/soyxan/sidesubs/releases/latest) and previous versions on the GitHub Releases page.
+
+### Install on Android
+
+1. Download the latest APK using the link above.
+2. Open the downloaded `SideSubs-latest.apk` file on your Android device.
+3. If Android asks for permission to install apps from your browser or file manager, allow it for that app.
+4. Confirm the installation and open SideSubs.
+5. Choose **Plex** or **Jellyfin** and follow the sign-in instructions.
+
+SideSubs is not currently distributed through Google Play, so Android may show a warning when installing the APK directly from GitHub. This is normal for apps installed outside the Play Store.
 
 ## Why SideSubs?
 
@@ -25,7 +48,7 @@ The native Android app is the main SideSubs application. A Docker/Web client is 
 - Discovers Plex Media Servers automatically and connects to Jellyfin servers by URL.
 - Follows active Plex and Jellyfin playback sessions.
 - Shows synchronized subtitles on a second screen.
-- Keeps SideSubs subtitle selection independent from the Plex player subtitle.
+- Keeps SideSubs subtitle selection independent from the subtitle selected in the playback client.
 - Supports external and embedded text subtitles.
 - Supports automatic preferred-language selection and manual track selection.
 - Supports regional language preferences such as Spanish (Spain) and Spanish (Latin America).
@@ -55,13 +78,13 @@ SideSubs can use text subtitle tracks exposed by Plex or Jellyfin, including:
 
 Image-based subtitle formats such as PGS are not currently rendered as text.
 
-For embedded text subtitles, SideSubs retrieves the subtitle through Plex, parses the complete cue timeline and keeps it locally for synchronized playback.
+For embedded text subtitles, SideSubs retrieves the subtitle through the connected media server, parses the complete cue timeline and keeps it locally for synchronized playback.
 
 ### Language selection
 
 A preferred subtitle language can be configured in Settings.
 
-Regional variants are supported where Plex metadata provides enough information, including examples such as:
+Regional variants are supported where the media-server metadata provides enough information, including examples such as:
 
 - Spanish (Spain)
 - Spanish (Latin America)
@@ -70,7 +93,7 @@ Regional variants are supported where Plex metadata provides enough information,
 - Portuguese (Portugal)
 - Portuguese (Brazil)
 
-If Plex only identifies the base language, SideSubs falls back to that language.
+If the media server only identifies the base language, SideSubs falls back to that language.
 
 ### Cinema mode
 
@@ -88,9 +111,9 @@ If SideSubs is sent to the background and then reopened while Cinema mode is act
 4. It selects a subtitle using the preferred language or a manual track choice.
 5. It retrieves and parses the subtitle timeline.
 6. It follows the media-server playback position and renders the synchronized current and next subtitle.
-7. Subtitle delay is applied locally without changing Plex playback.
+7. Subtitle delay is applied locally without changing media playback.
 
-If the selected Plex session disappears, SideSubs does not silently switch to another player.
+If the selected playback session disappears, SideSubs does not silently switch to another player.
 
 ## Architecture
 
@@ -189,7 +212,7 @@ Never commit your Plex token to GitHub.
 - Plex and Jellyfin authorization is stored internally on the device.
 - Tokens are never shown in the UI.
 - Diagnostic logs do not contain tokens, credentials or subtitle text.
-- SideSubs does not require filesystem access to the Plex media library.
+- SideSubs does not require filesystem access to your Plex or Jellyfin media library.
 
 ### Docker/Web
 
