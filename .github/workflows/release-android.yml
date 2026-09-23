@@ -85,14 +85,18 @@ jobs:
             OUTPUT_NAME="SideSubs-release.apk"
           fi
           cp android/app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/$OUTPUT_NAME"
+          cp android/app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/SideSubs-latest.apk"
           echo "APK_PATH=$RUNNER_TEMP/$OUTPUT_NAME" >> "$GITHUB_ENV"
           echo "APK_NAME=$OUTPUT_NAME" >> "$GITHUB_ENV"
+          echo "APK_LATEST_PATH=$RUNNER_TEMP/SideSubs-latest.apk" >> "$GITHUB_ENV"
 
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: SideSubs-release
-          path: ${{ env.APK_PATH }}
+          path: |
+            ${{ env.APK_PATH }}
+            ${{ env.APK_LATEST_PATH }}
           if-no-files-found: error
           retention-days: 30
 
@@ -102,7 +106,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "$APK_PATH#$APK_NAME" --clobber
+            gh release upload "$GITHUB_REF_NAME" "$APK_PATH#$APK_NAME" "$APK_LATEST_PATH#SideSubs-latest.apk" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" "$APK_PATH#$APK_NAME" --generate-notes --title "SideSubs $GITHUB_REF_NAME"
+            gh release create "$GITHUB_REF_NAME" "$APK_PATH#$APK_NAME" "$APK_LATEST_PATH#SideSubs-latest.apk" --generate-notes --title "SideSubs $GITHUB_REF_NAME"
           fi
