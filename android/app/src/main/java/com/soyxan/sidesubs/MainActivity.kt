@@ -1147,8 +1147,11 @@ class MainActivity : Activity() {
         }
 
         val saved = preferences.getString(KEY_PLAYER_ID, "").orEmpty()
+        val activePlayerId = selectedSession?.playerId
+            ?: chooseSession(sessions)?.playerId
+            ?: saved
         val labels = sessions.map { "${it.displayClient()}\n${it.title}" }.toTypedArray()
-        val checked = sessions.indexOfFirst { it.playerId == saved }
+        val checked = sessions.indexOfFirst { it.playerId == activePlayerId }
 
         AlertDialog.Builder(this)
             .setTitle("Playback session")
