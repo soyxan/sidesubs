@@ -10,6 +10,7 @@ import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.util.LinkedHashMap
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 class JellyfinClient(
     baseUrl: String,
@@ -22,8 +23,8 @@ class JellyfinClient(
     override val providerType = MediaProviderType.JELLYFIN
     private val serverUrl = baseUrl.trimEnd('/')
     private val accessToken = token.trim()
-    private val mediaSourceIds = mutableMapOf<String, String>()
-    private val selectedSubtitleIndexes = mutableMapOf<String, Int>()
+    private val mediaSourceIds = ConcurrentHashMap<String, String>()
+    private val selectedSubtitleIndexes = ConcurrentHashMap<String, Int>()
 
     private val subtitleCache = object : LinkedHashMap<String, SubtitleTimeline>(32, 0.75f, true) {
         override fun removeEldestEntry(
