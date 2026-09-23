@@ -30,6 +30,7 @@ import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.PopupMenu
 import android.widget.Spinner
 import android.widget.ScrollView
 import android.widget.TextView
@@ -467,10 +468,9 @@ class MainActivity : Activity() {
         setupStatusView = help
 
         val builder = AlertDialog.Builder(this)
-            .setTitle("Connect SideSubs")
+            .setCustomTitle(dialogTitleWithMenu("Connect SideSubs"))
             .setView(content)
             .setPositiveButton("Continue", null)
-            .setNeutralButton("View logs", null)
 
         if (!required) builder.setNegativeButton("Cancel", null)
 
@@ -481,9 +481,6 @@ class MainActivity : Activity() {
         setupDialog = dialog
 
         dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-                showDiagnosticLog()
-            }
             val signIn = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
 
             fun refreshProviderUi() {
@@ -1127,10 +1124,9 @@ class MainActivity : Activity() {
         val provider = mediaProvider
         if (provider == null) {
             AlertDialog.Builder(this)
-                .setTitle("SideSubs settings")
+                .setCustomTitle(dialogTitleWithMenu("SideSubs settings"))
                 .setMessage("No media server connected.")
                 .setPositiveButton("Connect") { _, _ -> showProviderSetup(required = false) }
-                .setNeutralButton("View logs") { _, _ -> showDiagnosticLog() }
                 .setNegativeButton("Close", null)
                 .show()
             return
@@ -1145,12 +1141,6 @@ class MainActivity : Activity() {
         content.addView(valueText(provider.providerType.displayName))
         content.addView(label("Connected server"))
         content.addView(valueText(provider.serverName))
-        val changeServerButton = Button(this).apply {
-            text = "Change server"
-            isAllCaps = false
-            gravity = Gravity.START or Gravity.CENTER_VERTICAL
-        }
-        content.addView(changeServerButton)
         content.addView(label("Preferred subtitle language"))
 
         var selectedLanguage = preferredLanguage()
@@ -1177,24 +1167,14 @@ class MainActivity : Activity() {
         content.addView(subtitleSizeButton)
 
         val dialog = AlertDialog.Builder(this)
-            .setTitle("SideSubs settings")
+            .setCustomTitle(dialogTitleWithMenu("SideSubs settings"))
             .setView(content)
             .setPositiveButton("Save", null)
-            .setNeutralButton("View logs", null)
+            .setNeutralButton("Change server", null)
             .setNegativeButton("Sign out", null)
             .create()
 
         dialog.setOnShowListener {
-            changeServerButton.setOnClickListener {
-                dialog.dismiss()
-                when (provider.providerType) {
-                    MediaProviderType.PLEX -> loadServerChooser()
-                    MediaProviderType.JELLYFIN -> showProviderSetup(required = false)
-                }
-            }
-            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-                showDiagnosticLog()
-            }
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val language = selectedLanguage
                 preferences.edit().putString(KEY_LANGUAGE, language).apply()
@@ -1203,12 +1183,66 @@ class MainActivity : Activity() {
                 dialog.dismiss()
                 pollOnce()
             }
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                dialog.dismiss()
+                when (provider.providerType) {
+                    MediaProviderType.PLEX -> loadServerChooser()
+                    MediaProviderType.JELLYFIN -> showProviderSetup(required = false)
+                }
+            }
             dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
                 dialog.dismiss()
                 confirmSignOut()
             }
         }
         dialog.show()
+    }
+
+    private fun dialogTitleWithMenu(title: String): View {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(24), dp(10), dp(8), dp(4))
+
+            addView(
+                TextView(this@MainActivity).apply {
+                    text = title
+                    setTextColor(Color.WHITE)
+                    textSize = 20f
+                    gravity = Gravity.CENTER_VERTICAL
+                },
+                LinearLayout.LayoutParams(0, dp(48), 1f),
+            )
+
+            addView(
+                TextView(this@MainActivity).apply {
+                    text = "⋮"
+                    contentDescription = "More options"
+                    setTextColor(0xFFB0B0B0.toInt())
+                    textSize = 28f
+                    gravity = Gravity.CENTER
+                    isClickable = true
+                    isFocusable = true
+                    minWidth = dp(48)
+                    minHeight = dp(48)
+                    setOnClickListener { anchor ->
+                        PopupMenu(this@MainActivity, anchor).apply {
+                            menu.add("View logs")
+                            setOnMenuItemClickListener { item ->
+                                if (item.title == "View logs") {
+                                    showDiagnosticLog()
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
+                            show()
+                        }
+                    }
+                },
+                LinearLayout.LayoutParams(dp(48), dp(48)),
+            )
+        }
     }
 
     private fun showDiagnosticLog() {
