@@ -218,6 +218,11 @@ class MainActivity : Activity() {
             diagnostics.add("Playback polling resumed")
             startPolling()
         }
+        if (pendingJellyfinLogin != null) {
+            diagnostics.add("SideSubs resumed; continuing Jellyfin sign-in")
+            handler.removeCallbacks(jellyfinAuthPollTask)
+            handler.post(jellyfinAuthPollTask)
+        }
         if (pendingPlexLogin != null) {
             diagnostics.add("SideSubs resumed; continuing Plex sign-in")
             if (plexLoginAuthorized) setupStatusView?.text = "Signed in. Finding your Plex server…"
@@ -230,6 +235,7 @@ class MainActivity : Activity() {
         appInForeground = false
         stopPolling()
         handler.removeCallbacks(authPollTask)
+        handler.removeCallbacks(jellyfinAuthPollTask)
         if (pendingPlexLogin != null) diagnostics.add("Plex sign-in paused while browser is open")
         super.onPause()
     }
@@ -374,14 +380,22 @@ class MainActivity : Activity() {
         stateView.text = "Connecting to saved media server…"
         executor.execute {
             try {
-                val connection = plexAuth.restoreConnection()
-                    ?: error("Saved Plex server is no longer available")
+                val savedProvider = runCatching {
+                    MediaProviderType.valueOf(
+                        preferences.getString(PlexAuthManager.KEY_PROVIDER, MediaProviderType.PLEX.name)
+                            ?: MediaProviderType.PLEX.name
+                    )
+                }.getOrDefault(MediaProviderType.PLEX)
+                val connection = when (savedProvider) {
+                    MediaProviderType.PLEX -> plexAuth.restoreConnection()
+                    MediaProviderType.JELLYFIN -> jellyfinAuth.restoreConnection()
+                } ?: error("Saved ${savedProvider.displayName} server is no longer available")
                 runOnUiThread { connectProvider(connection) }
             } catch (error: Exception) {
                 diagnostics.add("Restore server failed: ${error.javaClass.simpleName}")
                 runOnUiThread {
                     stateView.text = "Choose a media server"
-                    showProviderSetup(required = true, message = friendlyServerError(error))
+                    showProviderSetup(required = true, message = friendlyError(error))
                 }
             }
         }
