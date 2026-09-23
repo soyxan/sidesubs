@@ -61,6 +61,7 @@ class MainActivity : Activity() {
     @Volatile private var playbackGeneration = 0L
     @Volatile private var authPollInFlight = false
     @Volatile private var pendingPlexLogin: PlexPendingLogin? = null
+    @Volatile private var plexLoginGeneration = 0L
     @Volatile private var pendingJellyfinLogin: JellyfinPendingLogin? = null
     @Volatile private var jellyfinLoginGeneration = 0L
     @Volatile private var plexLoginAuthorized = false
@@ -110,6 +111,7 @@ class MainActivity : Activity() {
     private val authPollTask = object : Runnable {
         override fun run() {
             val pending = pendingPlexLogin ?: return
+            val generation = plexLoginGeneration
             if (!appInForeground) return
             val dialog = setupDialog
             if (authPollInFlight) {
@@ -126,7 +128,7 @@ class MainActivity : Activity() {
                             if (appInForeground) handler.postDelayed(this, AUTH_POLL_INTERVAL_MS)
                             return@execute
                         }
-                        if (pendingPlexLogin !== pending) return@execute
+                        if (pendingPlexLogin !== pending || generation != plexLoginGeneration) return@execute
                         plexLoginAuthorized = true
                         runOnUiThread {
                             if (setupDialog !== dialog) return@runOnUiThread
@@ -141,7 +143,7 @@ class MainActivity : Activity() {
                         return@execute
                     }
                     val servers = plexAuth.listServers()
-                    if (pendingPlexLogin !== pending) return@execute
+                    if (pendingPlexLogin !== pending || generation != plexLoginGeneration) return@execute
                     runOnUiThread {
                         if (setupDialog !== dialog || !appInForeground) return@runOnUiThread
                         pendingPlexLogin = null
@@ -155,7 +157,7 @@ class MainActivity : Activity() {
                         }
                     }
                 } catch (error: Exception) {
-                    if (pendingPlexLogin !== pending || !appInForeground) return@execute
+                    if (pendingPlexLogin !== pending || generation != plexLoginGeneration || !appInForeground) return@execute
                     if (error is IOException) {
                         runOnUiThread {
                             if (setupDialog !== dialog || !appInForeground) return@runOnUiThread
@@ -488,6 +490,13 @@ class MainActivity : Activity() {
             val defaultHelp =
                 message ?: "Choose the media server platform. SideSubs will use that provider's own sign-in flow."
 
+            fun cancelPlexLogin() {
+                plexLoginGeneration++
+                handler.removeCallbacks(authPollTask)
+                pendingPlexLogin = null
+                plexLoginAuthorized = false
+            }
+
             fun resetJellyfinLoginUi() {
                 jellyfinLoginGeneration++
                 handler.removeCallbacks(jellyfinAuthPollTask)
@@ -505,8 +514,9 @@ class MainActivity : Activity() {
             }
 
             fun refreshProviderUi() {
-                if (pendingJellyfinLogin != null) resetJellyfinLoginUi()
                 val providerType = providers[spinner.selectedItemPosition]
+                if (providerType != MediaProviderType.JELLYFIN) resetJellyfinLoginUi()
+                if (providerType != MediaProviderType.PLEX && pendingPlexLogin != null) cancelPlexLogin()
                 val jellyfin = providerType == MediaProviderType.JELLYFIN
                 jellyfinUrlLabel.visibility = if (jellyfin) View.VISIBLE else View.GONE
                 jellyfinUrlInput.visibility = if (jellyfin) View.VISIBLE else View.GONE
@@ -536,7 +546,11 @@ class MainActivity : Activity() {
             }
 
             cancel.setOnClickListener {
-                if (pendingJellyfinLogin != null) {
+                val providerType = providers[spinner.selectedItemPosition]
+                if (
+                    providerType == MediaProviderType.JELLYFIN &&
+                    (pendingJellyfinLogin != null || !signIn.isEnabled)
+                ) {
                     resetJellyfinLoginUi()
                 } else if (!required) {
                     dialog.dismiss()
@@ -545,7 +559,6 @@ class MainActivity : Activity() {
 
             spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                    resetJellyfinLoginUi()
                     refreshProviderUi()
                 }
 
@@ -561,11 +574,10 @@ class MainActivity : Activity() {
                             loadServerChooser(required = required)
                         } else {
                             signIn.isEnabled = false
-                            handler.removeCallbacks(authPollTask)
-                            pendingPlexLogin = null
-                            plexLoginAuthorized = false
+                            cancelPlexLogin()
                             help.text = "Opening Plex sign-in…"
-                            beginPlexSignIn(help, signIn)
+                            val generation = ++plexLoginGeneration
+                            beginPlexSignIn(help, signIn, generation)
                         }
                     }
 
@@ -591,6 +603,7 @@ class MainActivity : Activity() {
             if (setupDialog === dialog) {
                 handler.removeCallbacks(authPollTask)
                 handler.removeCallbacks(jellyfinAuthPollTask)
+                plexLoginGeneration++
                 jellyfinLoginGeneration++
                 pendingJellyfinLogin = null
                 pendingPlexLogin = null
@@ -606,6 +619,7 @@ class MainActivity : Activity() {
     private val jellyfinAuthPollTask = object : Runnable {
         override fun run() {
             val pending = pendingJellyfinLogin ?: return
+            val generation = jellyfinLoginGeneration
             if (!appInForeground) return
             val dialog = setupDialog
             if (authPollInFlight) {
@@ -621,15 +635,21 @@ class MainActivity : Activity() {
                         if (appInForeground) handler.postDelayed(this, AUTH_POLL_INTERVAL_MS)
                         return@execute
                     }
-                    if (pendingJellyfinLogin !== pending) return@execute
-                    pendingJellyfinLogin = null
+                    if (pendingJellyfinLogin !== pending || generation != jellyfinLoginGeneration) return@execute
                     runOnUiThread {
-                        if (setupDialog !== dialog || !appInForeground) return@runOnUiThread
+                        if (
+                            setupDialog !== dialog ||
+                            !appInForeground ||
+                            pendingJellyfinLogin !== pending ||
+                            generation != jellyfinLoginGeneration
+                        ) return@runOnUiThread
+                        pendingJellyfinLogin = null
+                        jellyfinAuth.saveConnection(connection)
                         setupDialog?.dismiss()
                         connectProvider(connection)
                     }
                 } catch (error: Exception) {
-                    if (pendingJellyfinLogin !== pending) return@execute
+                    if (pendingJellyfinLogin !== pending || generation != jellyfinLoginGeneration) return@execute
                     pendingJellyfinLogin = null
                     diagnostics.add("Jellyfin sign-in failed: ${error.javaClass.simpleName}")
                     runOnUiThread {
@@ -691,12 +711,14 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun beginPlexSignIn(status: TextView, button: Button) {
+    private fun beginPlexSignIn(status: TextView, button: Button, generation: Long) {
         executor.execute {
             try {
                 val pending = plexAuth.beginLogin()
+                if (generation != plexLoginGeneration) return@execute
                 pendingPlexLogin = pending
                 runOnUiThread {
+                    if (generation != plexLoginGeneration || setupDialog == null) return@runOnUiThread
                     status.text = "Complete sign-in in your browser, then return to SideSubs."
                     val intent = Intent(Intent.ACTION_VIEW, Uri.parse(pending.authUrl))
                     startActivity(intent)
@@ -704,8 +726,10 @@ class MainActivity : Activity() {
                     handler.post(authPollTask)
                 }
             } catch (error: Exception) {
+                if (generation != plexLoginGeneration) return@execute
                 diagnostics.add("Start Plex sign-in failed: ${error.javaClass.simpleName}")
                 runOnUiThread {
+                    if (generation != plexLoginGeneration) return@runOnUiThread
                     pendingPlexLogin = null
                     status.text = "Plex sign-in: ${friendlyAuthError(error)}"
                     button.isEnabled = true
