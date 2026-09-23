@@ -548,6 +548,75 @@ class MainActivity : Activity() {
         dialog.show()
     }
 
+    private val jellyfinAuthPollTask = object : Runnable {
+        override fun run() {
+            val pending = pendingJellyfinLogin ?: return
+            if (!appInForeground) return
+            val dialog = setupDialog
+            if (authPollInFlight) {
+                handler.postDelayed(this, AUTH_POLL_INTERVAL_MS)
+                return
+            }
+
+            authPollInFlight = true
+            executor.execute {
+                try {
+                    val connection = jellyfinAuth.pollLogin(pending)
+                    if (connection == null) {
+                        if (appInForeground) handler.postDelayed(this, AUTH_POLL_INTERVAL_MS)
+                        return@execute
+                    }
+                    if (pendingJellyfinLogin !== pending) return@execute
+                    pendingJellyfinLogin = null
+                    runOnUiThread {
+                        if (setupDialog !== dialog || !appInForeground) return@runOnUiThread
+                        setupDialog?.dismiss()
+                        connectProvider(connection)
+                    }
+                } catch (error: Exception) {
+                    if (pendingJellyfinLogin !== pending) return@execute
+                    pendingJellyfinLogin = null
+                    diagnostics.add("Jellyfin sign-in failed: ${error.javaClass.simpleName}")
+                    runOnUiThread {
+                        if (setupDialog !== dialog) return@runOnUiThread
+                        setupStatusView?.text = "Jellyfin sign-in: ${friendlyError(error)}"
+                        setupDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.apply {
+                            text = "Connect to Jellyfin"
+                            isEnabled = true
+                        }
+                    }
+                } finally {
+                    authPollInFlight = false
+                }
+            }
+        }
+    }
+
+    private fun beginJellyfinSignIn(serverUrl: String, status: TextView, button: Button) {
+        executor.execute {
+            try {
+                val pending = jellyfinAuth.beginLogin(serverUrl)
+                pendingJellyfinLogin = pending
+                runOnUiThread {
+                    status.text =
+                        "Quick Connect code: ${pending.code}\n\n" +
+                            "Open Jellyfin Settings → Quick Connect, enter this code and approve SideSubs."
+                    button.text = "Waiting for approval…"
+                    handler.removeCallbacks(jellyfinAuthPollTask)
+                    handler.post(jellyfinAuthPollTask)
+                }
+            } catch (error: Exception) {
+                diagnostics.add("Start Jellyfin sign-in failed: ${error.javaClass.simpleName}")
+                runOnUiThread {
+                    pendingJellyfinLogin = null
+                    status.text = "Jellyfin: ${friendlyError(error)}"
+                    button.text = "Connect to Jellyfin"
+                    button.isEnabled = true
+                }
+            }
+        }
+    }
+
     private fun beginPlexSignIn(status: TextView, button: Button) {
         executor.execute {
             try {
