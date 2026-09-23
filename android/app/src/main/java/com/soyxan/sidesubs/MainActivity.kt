@@ -448,8 +448,6 @@ class MainActivity : Activity() {
             setPadding(0, dp(12), 0, 0)
         }
         content.addView(help)
-        val viewLogButton = diagnosticLink()
-        content.addView(viewLogButton)
         if (mediaProvider == null) {
             val signInAgain = Button(this).apply {
                 text = "Sign in again"
@@ -472,6 +470,7 @@ class MainActivity : Activity() {
             .setTitle("Connect SideSubs")
             .setView(content)
             .setPositiveButton("Continue", null)
+            .setNeutralButton("View logs", null)
 
         if (!required) builder.setNegativeButton("Cancel", null)
 
@@ -482,7 +481,9 @@ class MainActivity : Activity() {
         setupDialog = dialog
 
         dialog.setOnShowListener {
-            viewLogButton.setOnClickListener { showDiagnosticLog() }
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                showDiagnosticLog()
+            }
             val signIn = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
 
             fun refreshProviderUi() {
@@ -1125,18 +1126,11 @@ class MainActivity : Activity() {
     private fun showSettings() {
         val provider = mediaProvider
         if (provider == null) {
-            val content = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(20), dp(8), dp(20), dp(4))
-                addView(valueText("No media server connected."))
-                addView(diagnosticLink().apply {
-                    setOnClickListener { showDiagnosticLog() }
-                })
-            }
             AlertDialog.Builder(this)
                 .setTitle("SideSubs settings")
-                .setView(content)
+                .setMessage("No media server connected.")
                 .setPositiveButton("Connect") { _, _ -> showProviderSetup(required = false) }
+                .setNeutralButton("View logs") { _, _ -> showDiagnosticLog() }
                 .setNegativeButton("Close", null)
                 .show()
             return
@@ -1151,6 +1145,12 @@ class MainActivity : Activity() {
         content.addView(valueText(provider.providerType.displayName))
         content.addView(label("Connected server"))
         content.addView(valueText(provider.serverName))
+        val changeServerButton = Button(this).apply {
+            text = "Change server"
+            isAllCaps = false
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+        }
+        content.addView(changeServerButton)
         content.addView(label("Preferred subtitle language"))
 
         var selectedLanguage = preferredLanguage()
@@ -1176,20 +1176,23 @@ class MainActivity : Activity() {
         }
         content.addView(subtitleSizeButton)
 
-        val viewLogButton = diagnosticLink()
-        content.addView(viewLogButton)
-
         val dialog = AlertDialog.Builder(this)
             .setTitle("SideSubs settings")
             .setView(content)
             .setPositiveButton("Save", null)
-            .setNeutralButton("Change server", null)
+            .setNeutralButton("View logs", null)
             .setNegativeButton("Sign out", null)
             .create()
 
         dialog.setOnShowListener {
-            viewLogButton.setOnClickListener {
+            changeServerButton.setOnClickListener {
                 dialog.dismiss()
+                when (provider.providerType) {
+                    MediaProviderType.PLEX -> loadServerChooser()
+                    MediaProviderType.JELLYFIN -> showProviderSetup(required = false)
+                }
+            }
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
                 showDiagnosticLog()
             }
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
@@ -1199,13 +1202,6 @@ class MainActivity : Activity() {
                 clearLoadedSubtitle()
                 dialog.dismiss()
                 pollOnce()
-            }
-            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-                dialog.dismiss()
-                when (provider.providerType) {
-                    MediaProviderType.PLEX -> loadServerChooser()
-                    MediaProviderType.JELLYFIN -> showProviderSetup(required = false)
-                }
             }
             dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
                 dialog.dismiss()
@@ -1303,17 +1299,6 @@ class MainActivity : Activity() {
         text = value
         setTextColor(0xFFCCCCCC.toInt())
         textSize = 15f
-    }
-
-    private fun diagnosticLink() = TextView(this).apply {
-        text = "View logs"
-        setTextColor(0xFF777777.toInt())
-        textSize = 12f
-        gravity = Gravity.END or Gravity.CENTER_VERTICAL
-        isClickable = true
-        isFocusable = true
-        setPadding(dp(12), dp(12), dp(4), dp(8))
-        minHeight = dp(40)
     }
 
     private fun input(value: String) = EditText(this).apply {
