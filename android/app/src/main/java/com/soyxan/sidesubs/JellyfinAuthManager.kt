@@ -96,7 +96,7 @@ class JellyfinAuthManager(
             accessToken = token,
             clientIdentifier = deviceId,
             userId = userId,
-        ).also(::saveConnection)
+        )
     }
 
     fun restoreConnection(): ProviderConnection? {
