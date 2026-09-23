@@ -106,10 +106,13 @@ class PlexAuthManager(
         if (token.isBlank()) return null
 
         diagnostics.add("Plex PIN authorized; account token received")
+        return token
+    }
+
+    fun saveAccountToken(token: String) {
         preferences.edit()
             .putString(KEY_ACCOUNT_TOKEN, token)
             .apply()
-        return token
     }
 
     fun listServers(): List<PlexServerResource> {
