@@ -2,6 +2,7 @@ package com.soyxan.sidesubs
 
 enum class MediaProviderType(val displayName: String) {
     PLEX("Plex"),
+    JELLYFIN("Jellyfin"),
 }
 
 data class ProviderConnection(
@@ -11,6 +12,7 @@ data class ProviderConnection(
     val baseUrl: String,
     val accessToken: String,
     val clientIdentifier: String,
+    val userId: String = "",
 )
 
 interface MediaProvider {
