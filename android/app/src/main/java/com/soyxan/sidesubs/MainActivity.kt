@@ -1349,13 +1349,19 @@ class MainActivity : Activity() {
                     minHeight = dp(48)
                     setOnClickListener { anchor ->
                         PopupMenu(this@MainActivity, anchor).apply {
+                            menu.add("About")
                             menu.add("View logs")
                             setOnMenuItemClickListener { item ->
-                                if (item.title == "View logs") {
-                                    showDiagnosticLog()
-                                    true
-                                } else {
-                                    false
+                                when (item.title.toString()) {
+                                    "About" -> {
+                                        showAbout()
+                                        true
+                                    }
+                                    "View logs" -> {
+                                        showDiagnosticLog()
+                                        true
+                                    }
+                                    else -> false
                                 }
                             }
                             show()
@@ -1365,6 +1371,70 @@ class MainActivity : Activity() {
                 LinearLayout.LayoutParams(dp(48), dp(48)),
             )
         }
+    }
+
+    private fun showAbout() {
+        val provider = mediaProvider
+        val session = selectedSession
+
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(4), dp(20), dp(8))
+
+            addView(
+                TextView(this@MainActivity).apply {
+                    text = "Open-source second-screen subtitles for Plex and Jellyfin."
+                    setTextColor(0xFFCCCCCC.toInt())
+                    textSize = 14f
+                    setPadding(0, 0, 0, dp(8))
+                }
+            )
+
+            addView(label("Version"))
+            addView(valueText(BuildConfig.VERSION_NAME))
+
+            if (provider != null) {
+                addView(label("Media server"))
+                addView(valueText(provider.providerType.displayName))
+
+                addView(label("Connected server"))
+                addView(valueText(provider.serverName))
+            }
+
+            if (session != null) {
+                addView(label("Connected client"))
+                addView(valueText(session.displayClient()))
+
+                addView(label("Now playing"))
+                addView(valueText(session.title))
+            }
+
+            addView(label("GitHub"))
+            addView(
+                TextView(this@MainActivity).apply {
+                    text = "github.com/soyxan/sidesubs"
+                    setTextColor(0xFF90CAF9.toInt())
+                    textSize = 15f
+                    isClickable = true
+                    isFocusable = true
+                    setPadding(0, dp(2), 0, dp(4))
+                    setOnClickListener {
+                        startActivity(
+                            Intent(
+                                Intent.ACTION_VIEW,
+                                Uri.parse("https://github.com/soyxan/sidesubs"),
+                            )
+                        )
+                    }
+                }
+            )
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("About SideSubs")
+            .setView(content)
+            .setPositiveButton("Close", null)
+            .show()
     }
 
     private fun showDiagnosticLog() {
