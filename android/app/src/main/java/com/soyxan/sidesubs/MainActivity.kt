@@ -761,11 +761,6 @@ class MainActivity : Activity() {
         required: Boolean,
         retryAfterLogin: Boolean = false,
     ) {
-        if (servers.size == 1) {
-            connectToServer(servers.first(), servers, required, retryAfterLogin)
-            return
-        }
-
         val labels = servers.map { server ->
             val local = server.connections.any { it.local && !it.relay }
             "${server.name}${if (local) " · Local" else ""}"
