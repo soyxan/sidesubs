@@ -129,6 +129,7 @@ class MainActivity : Activity() {
                             return@execute
                         }
                         if (pendingPlexLogin !== pending || generation != plexLoginGeneration) return@execute
+                        plexAuth.saveAccountToken(token)
                         plexLoginAuthorized = true
                         runOnUiThread {
                             if (setupDialog !== dialog) return@runOnUiThread
