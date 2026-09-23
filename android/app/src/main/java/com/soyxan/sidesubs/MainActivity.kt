@@ -1283,9 +1283,14 @@ class MainActivity : Activity() {
         }
         content.addView(subtitleSizeButton)
 
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            addView(content)
+        }
+
         val dialog = AlertDialog.Builder(this)
             .setCustomTitle(dialogTitleWithMenu("SideSubs settings"))
-            .setView(content)
+            .setView(scroll)
             .setPositiveButton("Save", null)
             .setNeutralButton("Change server", null)
             .setNegativeButton("Sign out", null)
