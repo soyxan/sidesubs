@@ -47,6 +47,7 @@ import kotlin.math.roundToInt
 class MainActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private val executor = Executors.newSingleThreadExecutor()
+    private val sessionRefreshExecutor = Executors.newSingleThreadExecutor()
     private val playbackClock = PlaybackClock()
 
     private lateinit var preferences: SharedPreferences
@@ -352,7 +353,7 @@ class MainActivity : Activity() {
         settingsButton = controlButton("", R.drawable.ic_settings, "Settings")
         cinemaButton = controlButton("", R.drawable.ic_fullscreen, "Cinema mode")
 
-        sessionButton.setOnClickListener { showSessionChooser() }
+        sessionButton.setOnClickListener { refreshSessionsAndShowChooser() }
         subtitleButton.setOnClickListener { showSubtitleChooser() }
         delayButton.setOnClickListener { showDelayControls() }
         delayMinusButton.setOnClickListener { adjustDelay(-DELAY_STEP_MS) }
@@ -816,6 +817,9 @@ class MainActivity : Activity() {
                 if (!isCurrentPlayback(provider, generation)) return@execute
                 val freshSessions = provider.sessions()
                 if (!isCurrentPlayback(provider, generation)) return@execute
+                runOnUiThread {
+                    if (isCurrentPlayback(provider, generation)) sessions = freshSessions
+                }
                 if (freshSessions.size != loggedSessionCount) {
                     loggedSessionCount = freshSessions.size
                     diagnostics.add("Playback sessions available: ${freshSessions.size}")
@@ -987,6 +991,38 @@ class MainActivity : Activity() {
             }
         }
         return current to next
+    }
+
+    private fun refreshSessionsAndShowChooser() {
+        val provider = mediaProvider
+        if (provider == null) {
+            Toast.makeText(this, "No media server connected", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        sessionButton.isEnabled = false
+        sessionRefreshExecutor.execute {
+            try {
+                val freshSessions = provider.sessions()
+                runOnUiThread {
+                    if (mediaProvider !== provider) return@runOnUiThread
+                    sessions = freshSessions
+                    sessionButton.isEnabled = true
+                    showSessionChooser()
+                }
+            } catch (error: Exception) {
+                diagnostics.add("Session refresh failed: ${error.javaClass.simpleName}")
+                runOnUiThread {
+                    sessionButton.isEnabled = true
+                    Toast.makeText(
+                        this,
+                        "Could not refresh playback sessions",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                    showSessionChooser()
+                }
+            }
+        }
     }
 
     private fun showSessionChooser() {
@@ -1622,6 +1658,7 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         executor.shutdownNow()
+        sessionRefreshExecutor.shutdownNow()
         super.onDestroy()
     }
 
