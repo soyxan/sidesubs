@@ -767,13 +767,22 @@ class MainActivity : Activity() {
                 serverName = connection.serverName,
                 diagnostics = diagnostics,
             )
+
+            MediaProviderType.JELLYFIN -> JellyfinClient(
+                baseUrl = connection.baseUrl,
+                token = connection.accessToken,
+                userId = connection.userId,
+                deviceId = connection.clientIdentifier,
+                serverName = connection.serverName,
+                diagnostics = diagnostics,
+            )
         }
 
         mediaProvider = provider
         loggedSessionCount = -1
         loggedSessionState = ""
         loggedPollError = ""
-        diagnostics.add("Connected to Plex server using validated address")
+        diagnostics.add("Connected to ${connection.provider.displayName} server")
         playbackClock.clear()
         clearLoadedSubtitle()
         stateView.text = "Connecting to ${connection.serverName}…"
@@ -883,7 +892,7 @@ class MainActivity : Activity() {
                 }
             } catch (error: Exception) {
                 if (!isCurrentPlayback(provider, generation)) return@execute
-                val reason = Regex("Plex HTTP [0-9]{3}").find(error.message.orEmpty())?.value
+                val reason = Regex("(Plex|Jellyfin) HTTP [0-9]{3}").find(error.message.orEmpty())?.value
                     ?: error.javaClass.simpleName
                 if (reason != loggedPollError) {
                     loggedPollError = reason
@@ -1155,7 +1164,10 @@ class MainActivity : Activity() {
             }
             dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
                 dialog.dismiss()
-                loadServerChooser()
+                when (provider.providerType) {
+                    MediaProviderType.PLEX -> loadServerChooser()
+                    MediaProviderType.JELLYFIN -> showProviderSetup(required = false)
+                }
             }
             dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
                 dialog.dismiss()
@@ -1218,13 +1230,17 @@ class MainActivity : Activity() {
     }
 
     private fun confirmSignOut() {
+        val providerType = mediaProvider?.providerType ?: MediaProviderType.PLEX
         AlertDialog.Builder(this)
-            .setTitle("Sign out of Plex?")
-            .setMessage("SideSubs will remove the saved Plex authorization and server selection from this device.")
+            .setTitle("Sign out of ${providerType.displayName}?")
+            .setMessage("SideSubs will remove the saved ${providerType.displayName} authorization and server selection from this device.")
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Sign out") { _, _ ->
                 stopPolling()
-                plexAuth.signOut()
+                when (providerType) {
+                    MediaProviderType.PLEX -> plexAuth.signOut()
+                    MediaProviderType.JELLYFIN -> jellyfinAuth.signOut()
+                }
                 mediaProvider = null
                 sessions = emptyList()
                 selectedSession = null
