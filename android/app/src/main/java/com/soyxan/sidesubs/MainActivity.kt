@@ -448,10 +448,7 @@ class MainActivity : Activity() {
             setPadding(0, dp(12), 0, 0)
         }
         content.addView(help)
-        val viewLogButton = Button(this).apply {
-            text = "View log"
-            isAllCaps = false
-        }
+        val viewLogButton = diagnosticLink()
         content.addView(viewLogButton)
         if (mediaProvider == null) {
             val signInAgain = Button(this).apply {
@@ -1128,11 +1125,18 @@ class MainActivity : Activity() {
     private fun showSettings() {
         val provider = mediaProvider
         if (provider == null) {
+            val content = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(20), dp(8), dp(20), dp(4))
+                addView(valueText("No media server connected."))
+                addView(diagnosticLink().apply {
+                    setOnClickListener { showDiagnosticLog() }
+                })
+            }
             AlertDialog.Builder(this)
                 .setTitle("SideSubs settings")
-                .setMessage("No media server connected.")
+                .setView(content)
                 .setPositiveButton("Connect") { _, _ -> showProviderSetup(required = false) }
-                .setNeutralButton("View log") { _, _ -> showDiagnosticLog() }
                 .setNegativeButton("Close", null)
                 .show()
             return
@@ -1172,10 +1176,7 @@ class MainActivity : Activity() {
         }
         content.addView(subtitleSizeButton)
 
-        val viewLogButton = Button(this).apply {
-            text = "View log"
-            isAllCaps = false
-        }
+        val viewLogButton = diagnosticLink()
         content.addView(viewLogButton)
 
         val dialog = AlertDialog.Builder(this)
@@ -1302,6 +1303,17 @@ class MainActivity : Activity() {
         text = value
         setTextColor(0xFFCCCCCC.toInt())
         textSize = 15f
+    }
+
+    private fun diagnosticLink() = TextView(this).apply {
+        text = "View logs"
+        setTextColor(0xFF777777.toInt())
+        textSize = 12f
+        gravity = Gravity.END or Gravity.CENTER_VERTICAL
+        isClickable = true
+        isFocusable = true
+        setPadding(dp(12), dp(12), dp(4), dp(8))
+        minHeight = dp(40)
     }
 
     private fun input(value: String) = EditText(this).apply {
