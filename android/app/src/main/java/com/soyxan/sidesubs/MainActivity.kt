@@ -25,6 +25,7 @@ import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
+import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
@@ -50,6 +51,7 @@ class MainActivity : Activity() {
 
     private lateinit var preferences: SharedPreferences
     private lateinit var plexAuth: PlexAuthManager
+    private lateinit var jellyfinAuth: JellyfinAuthManager
     private lateinit var diagnostics: DiagnosticLog
     private var mediaProvider: MediaProvider? = null
 
@@ -57,6 +59,7 @@ class MainActivity : Activity() {
     @Volatile private var playbackGeneration = 0L
     @Volatile private var authPollInFlight = false
     @Volatile private var pendingPlexLogin: PlexPendingLogin? = null
+    @Volatile private var pendingJellyfinLogin: JellyfinPendingLogin? = null
     @Volatile private var plexLoginAuthorized = false
     @Volatile private var appInForeground = false
     private var cinemaMode = false
@@ -183,13 +186,16 @@ class MainActivity : Activity() {
         preferences = getSharedPreferences(PREFS, MODE_PRIVATE)
         diagnostics = DiagnosticLog(this)
         plexAuth = PlexAuthManager(preferences, diagnostics)
-        diagnostics.add("App started; savedServer=${plexAuth.hasSavedServer()} accountTokenPresent=${plexAuth.hasAccountToken()}")
+        jellyfinAuth = JellyfinAuthManager(preferences, diagnostics)
+        diagnostics.add("App started; savedProvider=" + preferences.getString(PlexAuthManager.KEY_PROVIDER, "").orEmpty())
         installCrashRecorder()
         buildUi()
 
         val afterCrash = {
             when {
-                plexAuth.hasSavedServer() -> restoreSavedProvider()
+                jellyfinAuth.hasSavedConnection() -> restoreSavedProvider()
+                preferences.getString(PlexAuthManager.KEY_PROVIDER, "").orEmpty() == MediaProviderType.PLEX.name &&
+                    plexAuth.hasSavedServer() -> restoreSavedProvider()
                 plexAuth.hasAccountToken() ->
                     showProviderSetup(required = true, message = "Signed in to Plex. Find a media server to continue.")
                 else -> showProviderSetup(required = true)
