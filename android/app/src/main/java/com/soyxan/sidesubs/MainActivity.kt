@@ -62,6 +62,7 @@ class MainActivity : Activity() {
     @Volatile private var authPollInFlight = false
     @Volatile private var pendingPlexLogin: PlexPendingLogin? = null
     @Volatile private var pendingJellyfinLogin: JellyfinPendingLogin? = null
+    @Volatile private var jellyfinLoginGeneration = 0L
     @Volatile private var plexLoginAuthorized = false
     @Volatile private var appInForeground = false
     private var cinemaMode = false
@@ -471,8 +472,8 @@ class MainActivity : Activity() {
             .setCustomTitle(dialogTitleWithMenu("Connect SideSubs"))
             .setView(content)
             .setPositiveButton("Continue", null)
-
-        if (!required) builder.setNegativeButton("Cancel", null)
+            .setNeutralButton("Copy code", null)
+            .setNegativeButton("Cancel", null)
 
         val dialog = builder.create().apply {
             setCancelable(!required)
@@ -482,8 +483,29 @@ class MainActivity : Activity() {
 
         dialog.setOnShowListener {
             val signIn = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            val copyCode = dialog.getButton(AlertDialog.BUTTON_NEUTRAL)
+            val cancel = dialog.getButton(AlertDialog.BUTTON_NEGATIVE)
+            val defaultHelp =
+                message ?: "Choose the media server platform. SideSubs will use that provider's own sign-in flow."
+
+            fun resetJellyfinLoginUi() {
+                jellyfinLoginGeneration++
+                handler.removeCallbacks(jellyfinAuthPollTask)
+                pendingJellyfinLogin = null
+                copyCode.visibility = View.GONE
+                cancel.visibility = if (required) View.GONE else View.VISIBLE
+                help.text = defaultHelp
+                signIn.isEnabled = true
+                val providerType = providers[spinner.selectedItemPosition]
+                signIn.text = when (providerType) {
+                    MediaProviderType.PLEX ->
+                        if (plexAuth.hasAccountToken()) "Find Plex servers" else "Sign in with Plex"
+                    MediaProviderType.JELLYFIN -> "Connect to Jellyfin"
+                }
+            }
 
             fun refreshProviderUi() {
+                if (pendingJellyfinLogin != null) resetJellyfinLoginUi()
                 val providerType = providers[spinner.selectedItemPosition]
                 val jellyfin = providerType == MediaProviderType.JELLYFIN
                 jellyfinUrlLabel.visibility = if (jellyfin) View.VISIBLE else View.GONE
@@ -493,12 +515,37 @@ class MainActivity : Activity() {
                         if (plexAuth.hasAccountToken()) "Find Plex servers" else "Sign in with Plex"
                     MediaProviderType.JELLYFIN -> "Connect to Jellyfin"
                 }
+                signIn.isEnabled = true
+                copyCode.visibility = View.GONE
+                cancel.visibility = if (required) View.GONE else View.VISIBLE
+                help.text = defaultHelp
                 setupSignInAgainButton?.visibility =
                     if (!jellyfin && plexAuth.hasAccountToken()) View.VISIBLE else View.GONE
             }
 
+            copyCode.visibility = View.GONE
+            cancel.visibility = if (required) View.GONE else View.VISIBLE
+
+            copyCode.setOnClickListener {
+                val code = pendingJellyfinLogin?.code.orEmpty()
+                if (code.isNotBlank()) {
+                    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("Jellyfin Quick Connect code", code))
+                    Toast.makeText(this, "Code copied", Toast.LENGTH_SHORT).show()
+                }
+            }
+
+            cancel.setOnClickListener {
+                if (pendingJellyfinLogin != null) {
+                    resetJellyfinLoginUi()
+                } else if (!required) {
+                    dialog.dismiss()
+                }
+            }
+
             spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    resetJellyfinLoginUi()
                     refreshProviderUi()
                 }
 
@@ -524,8 +571,18 @@ class MainActivity : Activity() {
 
                     MediaProviderType.JELLYFIN -> {
                         signIn.isEnabled = false
+                        copyCode.visibility = View.GONE
+                        cancel.visibility = View.VISIBLE
                         help.text = "Connecting to Jellyfin…"
-                        beginJellyfinSignIn(jellyfinUrlInput.text.toString(), help, signIn)
+                        val generation = ++jellyfinLoginGeneration
+                        beginJellyfinSignIn(
+                            jellyfinUrlInput.text.toString(),
+                            help,
+                            signIn,
+                            copyCode,
+                            cancel,
+                            generation,
+                        )
                     }
                 }
             }
@@ -534,6 +591,7 @@ class MainActivity : Activity() {
             if (setupDialog === dialog) {
                 handler.removeCallbacks(authPollTask)
                 handler.removeCallbacks(jellyfinAuthPollTask)
+                jellyfinLoginGeneration++
                 pendingJellyfinLogin = null
                 pendingPlexLogin = null
                 plexLoginAuthorized = false
@@ -581,6 +639,9 @@ class MainActivity : Activity() {
                             text = "Connect to Jellyfin"
                             isEnabled = true
                         }
+                        setupDialog?.getButton(AlertDialog.BUTTON_NEUTRAL)?.visibility = View.GONE
+                        setupDialog?.getButton(AlertDialog.BUTTON_NEGATIVE)?.visibility =
+                            if (setupRequired) View.GONE else View.VISIBLE
                     }
                 } finally {
                     authPollInFlight = false
@@ -589,26 +650,42 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun beginJellyfinSignIn(serverUrl: String, status: TextView, button: Button) {
+    private fun beginJellyfinSignIn(
+        serverUrl: String,
+        status: TextView,
+        button: Button,
+        copyCodeButton: Button,
+        cancelButton: Button,
+        generation: Long,
+    ) {
         executor.execute {
             try {
                 val pending = jellyfinAuth.beginLogin(serverUrl)
+                if (generation != jellyfinLoginGeneration) return@execute
                 pendingJellyfinLogin = pending
                 runOnUiThread {
+                    if (generation != jellyfinLoginGeneration || setupDialog == null) return@runOnUiThread
                     status.text =
                         "Quick Connect code: ${pending.code}\n\n" +
                             "Open Jellyfin Settings → Quick Connect, enter this code and approve SideSubs."
                     button.text = "Waiting for approval…"
+                    button.isEnabled = false
+                    copyCodeButton.visibility = View.VISIBLE
+                    cancelButton.visibility = View.VISIBLE
                     handler.removeCallbacks(jellyfinAuthPollTask)
                     handler.post(jellyfinAuthPollTask)
                 }
             } catch (error: Exception) {
+                if (generation != jellyfinLoginGeneration) return@execute
                 diagnostics.add("Start Jellyfin sign-in failed: ${error.javaClass.simpleName}")
                 runOnUiThread {
+                    if (generation != jellyfinLoginGeneration) return@runOnUiThread
                     pendingJellyfinLogin = null
                     status.text = "Jellyfin: ${friendlyError(error)}"
                     button.text = "Connect to Jellyfin"
                     button.isEnabled = true
+                    copyCodeButton.visibility = View.GONE
+                    cancelButton.visibility = if (setupRequired) View.GONE else View.VISIBLE
                 }
             }
         }
