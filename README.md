@@ -14,6 +14,10 @@ It is designed for situations where you want to watch Plex on a TV while reading
 
 The native Android app is the main SideSubs application. A Docker/Web client is also available as an experimental alternative.
 
+## Screenshot
+
+![SideSubs Android app showing synchronized Spanish subtitles while Plex plays on a Samsung TV](docs/images/sidesubs-android-screenshot.jpg)
+
 ## Features
 
 - Connects directly to Plex.

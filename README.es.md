@@ -14,6 +14,10 @@ Puedes seguir viendo Plex en la televisión con un idioma de subtítulos y consu
 
 La aplicación nativa para Android es la versión principal de SideSubs. También existe un cliente Docker/Web experimental.
 
+## Captura de pantalla
+
+![Aplicación Android de SideSubs mostrando subtítulos en español sincronizados con Plex en una Samsung TV](docs/images/sidesubs-android-screenshot.jpg)
+
 ## Características
 
 - Conexión directa con Plex.
