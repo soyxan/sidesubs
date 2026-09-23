@@ -1733,8 +1733,8 @@ class MainActivity : Activity() {
             SubtitleSizeOption("very-small", "Very small", 18f, 21f, 14f),
             SubtitleSizeOption("small", "Small", 22f, 25f, 16f),
             SubtitleSizeOption("medium", "Medium", 26f, 30f, 19f),
-            SubtitleSizeOption("large", "Large", 31f, 36f, 23f),
-            SubtitleSizeOption("very-large", "Very large", 36f, 42f, 26f),
+            SubtitleSizeOption("large", "Large", 32f, 38f, 24f),
+            SubtitleSizeOption("very-large", "Very large", 40f, 50f, 31f),
         )
 
         const val PREFS = "sidesubs_settings"
