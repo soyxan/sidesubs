@@ -485,6 +485,30 @@ class MainActivity : Activity() {
         dialog.setOnShowListener {
             viewLogButton.setOnClickListener { showDiagnosticLog() }
             val signIn = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+
+            fun refreshProviderUi() {
+                val providerType = providers[spinner.selectedItemPosition]
+                val jellyfin = providerType == MediaProviderType.JELLYFIN
+                jellyfinUrlLabel.visibility = if (jellyfin) View.VISIBLE else View.GONE
+                jellyfinUrlInput.visibility = if (jellyfin) View.VISIBLE else View.GONE
+                signIn.text = when (providerType) {
+                    MediaProviderType.PLEX ->
+                        if (plexAuth.hasAccountToken()) "Find Plex servers" else "Sign in with Plex"
+                    MediaProviderType.JELLYFIN -> "Connect to Jellyfin"
+                }
+                setupSignInAgainButton?.visibility =
+                    if (!jellyfin && plexAuth.hasAccountToken()) View.VISIBLE else View.GONE
+            }
+
+            spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    refreshProviderUi()
+                }
+
+                override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+            }
+            refreshProviderUi()
+
             signIn.setOnClickListener {
                 val providerType = providers[spinner.selectedItemPosition]
                 when (providerType) {
@@ -500,12 +524,20 @@ class MainActivity : Activity() {
                             beginPlexSignIn(help, signIn)
                         }
                     }
+
+                    MediaProviderType.JELLYFIN -> {
+                        signIn.isEnabled = false
+                        help.text = "Connecting to Jellyfin…"
+                        beginJellyfinSignIn(jellyfinUrlInput.text.toString(), help, signIn)
+                    }
                 }
             }
         }
         dialog.setOnDismissListener {
             if (setupDialog === dialog) {
                 handler.removeCallbacks(authPollTask)
+                handler.removeCallbacks(jellyfinAuthPollTask)
+                pendingJellyfinLogin = null
                 pendingPlexLogin = null
                 plexLoginAuthorized = false
                 setupDialog = null
