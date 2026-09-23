@@ -419,7 +419,25 @@ class MainActivity : Activity() {
             android.R.layout.simple_spinner_dropdown_item,
             providers.map { it.displayName },
         )
+        val savedProvider = runCatching {
+            MediaProviderType.valueOf(
+                preferences.getString(PlexAuthManager.KEY_PROVIDER, MediaProviderType.PLEX.name)
+                    ?: MediaProviderType.PLEX.name
+            )
+        }.getOrDefault(MediaProviderType.PLEX)
+        spinner.setSelection(providers.indexOf(savedProvider).coerceAtLeast(0))
         content.addView(spinner)
+
+        val jellyfinUrlLabel = label("Jellyfin server URL")
+        val jellyfinUrlInput = input(
+            preferences.getString(PlexAuthManager.KEY_SERVER_URL, "").orEmpty()
+                .takeIf { savedProvider == MediaProviderType.JELLYFIN }
+                ?: ""
+        ).apply {
+            hint = "http://192.168.0.10:8096"
+        }
+        content.addView(jellyfinUrlLabel)
+        content.addView(jellyfinUrlInput)
 
         val help = TextView(this).apply {
             text = message ?: "Choose the media server platform. SideSubs will use that provider's own sign-in flow."
@@ -454,10 +472,7 @@ class MainActivity : Activity() {
         val builder = AlertDialog.Builder(this)
             .setTitle("Connect SideSubs")
             .setView(content)
-            .setPositiveButton(
-                if (plexAuth.hasAccountToken()) "Find Plex servers" else "Sign in with Plex",
-                null,
-            )
+            .setPositiveButton("Continue", null)
 
         if (!required) builder.setNegativeButton("Cancel", null)
 
