@@ -1391,7 +1391,11 @@ class MainActivity : Activity() {
             )
 
             addView(label("Version"))
-            addView(valueText(BuildConfig.VERSION_NAME))
+            addView(
+                valueText(
+                    packageManager.getPackageInfo(packageName, 0).versionName ?: "Unknown"
+                )
+            )
 
             if (provider != null) {
                 addView(label("Media server"))
