@@ -201,6 +201,13 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         appInForeground = true
+        if (cinemaMode) {
+            diagnostics.add("Cinema mode resumed")
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            enterImmersiveMode()
+            showCinemaChromeTemporarily()
+        }
         if (mediaProvider != null) {
             diagnostics.add("Playback polling resumed")
             startPolling()
