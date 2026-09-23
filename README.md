@@ -1,6 +1,12 @@
 # SideSubs
 
-**SideSubs** is an Android-first second-screen subtitle companion for Plex.
+## Why SideSubs?
+
+I built SideSubs for a simple reason: I usually watch movies and TV shows in their original language with English subtitles. Most of the time that works perfectly, but occasionally there is a line or expression I do not fully understand.
+
+I wanted a way to keep the English subtitles on the TV while having Spanish — my native language — available on a phone or tablet as a second, synchronized subtitle track. That is what SideSubs does.
+
+**SideSubs** is an Android-first second-screen subtitle companion for Plex. It works with any supported subtitle language, not just English and Spanish.
 
 It is designed for situations where you want to watch Plex on a TV while reading a second subtitle language on a phone or tablet. The subtitle shown by SideSubs is independent from the subtitle selected in the Plex player, so both can be used at the same time.
 
