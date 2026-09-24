@@ -1100,7 +1100,16 @@ class MainActivity : Activity() {
                 break
             }
         }
-        return current to next
+
+        val preview = next?.takeIf { upcoming ->
+            if (current != null) {
+                upcoming.start - current.end <= NEXT_PREVIEW_SECONDS
+            } else {
+                upcoming.start - position <= NEXT_PREVIEW_SECONDS
+            }
+        }
+
+        return current to preview
     }
 
     private fun refreshSessionsAndShowChooser() {
@@ -1974,6 +1983,7 @@ class MainActivity : Activity() {
         const val MAX_DELAY_MS = 5000
         const val DELAY_STEP_MS = 250
         const val DELAY_CONTROLS_TIMEOUT_MS = 3000L
+        const val NEXT_PREVIEW_SECONDS = 4.0
         const val POLL_INTERVAL_MS = 750L
         const val AUTH_POLL_INTERVAL_MS = 3_000L
         const val NETWORK_RETRY_INTERVAL_MS = 3_000L
