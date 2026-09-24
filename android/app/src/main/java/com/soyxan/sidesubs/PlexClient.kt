@@ -21,6 +21,7 @@ class PlexClient(
 ) : MediaProvider {
     override val providerType = MediaProviderType.PLEX
     val serverUrl: String = normalizeBaseUrl(baseUrl)
+    override val serverAddress: String = Uri.parse(serverUrl).encodedAuthority.orEmpty()
     private val token = token.trim()
 
     private val subtitleCache = object : LinkedHashMap<String, SubtitleTimeline>(32, 0.75f, true) {
