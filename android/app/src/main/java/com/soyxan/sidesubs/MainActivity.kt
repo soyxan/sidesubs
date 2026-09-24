@@ -1026,7 +1026,7 @@ class MainActivity : Activity() {
         if (items.isEmpty()) return null
         val selectedPlayerId = preferences.getString(KEY_PLAYER_ID, "").orEmpty()
         if (selectedPlayerId.isNotBlank()) {
-            items.firstOrNull { it.playerId == selectedPlayerId }?.let { return it }
+            return items.firstOrNull { it.playerId == selectedPlayerId }
         }
         return items.firstOrNull { it.state.equals("playing", ignoreCase = true) } ?: items.first()
     }
@@ -1242,7 +1242,7 @@ class MainActivity : Activity() {
         val delay = if (::preferences.isInitialized) preferences.getInt(KEY_DELAY_MS, 1000) else 1000
         delayButton.text = ""
         if (::delayValueView.isInitialized) {
-            delayValueView.text = String.format(Locale.US, "%.2f s", delay / 1000.0)
+            delayValueView.text = String.format(Locale.US, "%+.2f s", delay / 1000.0)
         }
     }
 
@@ -1979,7 +1979,7 @@ class MainActivity : Activity() {
         const val KEY_SUBTITLE_SIZE = "subtitle_size"
         const val KEY_DELAY_MS = "subtitle_delay_ms"
         const val KEY_LAST_CRASH = "last_crash"
-        const val MIN_DELAY_MS = 0
+        const val MIN_DELAY_MS = -5000
         const val MAX_DELAY_MS = 5000
         const val DELAY_STEP_MS = 250
         const val DELAY_CONTROLS_TIMEOUT_MS = 3000L
