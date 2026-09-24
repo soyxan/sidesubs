@@ -22,6 +22,7 @@ class JellyfinClient(
 ) : MediaProvider {
     override val providerType = MediaProviderType.JELLYFIN
     private val serverUrl = baseUrl.trimEnd('/')
+    override val serverAddress: String = Uri.parse(serverUrl).encodedAuthority.orEmpty()
     private val accessToken = token.trim()
     private val mediaSourceIds = ConcurrentHashMap<String, String>()
     private val selectedSubtitleIndexes = ConcurrentHashMap<String, Int>()
