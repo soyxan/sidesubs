@@ -18,6 +18,7 @@ data class ProviderConnection(
 interface MediaProvider {
     val providerType: MediaProviderType
     val serverName: String
+    val serverAddress: String
     fun sessions(): List<PlaybackSession>
     fun subtitleTracks(mediaId: String): List<SubtitleTrack>
     fun subtitleTimeline(mediaId: String, track: SubtitleTrack): SubtitleTimeline
