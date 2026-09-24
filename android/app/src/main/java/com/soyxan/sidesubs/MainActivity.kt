@@ -1412,6 +1412,11 @@ class MainActivity : Activity() {
 
                 addView(label("Connected server"))
                 addView(valueText(provider.serverName))
+
+                if (provider.serverAddress.isNotBlank()) {
+                    addView(label("Server address"))
+                    addView(valueText(provider.serverAddress))
+                }
             }
 
             if (session != null) {
