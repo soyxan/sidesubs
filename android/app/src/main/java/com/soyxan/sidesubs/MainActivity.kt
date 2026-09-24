@@ -31,6 +31,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.PopupMenu
+import android.widget.ProgressBar
 import android.widget.Spinner
 import android.widget.ScrollView
 import android.widget.TextView
@@ -72,6 +73,7 @@ class MainActivity : Activity() {
     private var hideDelayControlsTask: Runnable? = null
     private var setupDialog: AlertDialog? = null
     private var setupStatusView: TextView? = null
+    private var setupProgressView: ProgressBar? = null
     private var setupSignInAgainButton: Button? = null
     private var setupRequired = true
 
@@ -134,6 +136,7 @@ class MainActivity : Activity() {
                         runOnUiThread {
                             if (setupDialog !== dialog) return@runOnUiThread
                             setupStatusView?.text = "Signed in. Finding your Plex server…"
+                            setupProgressView?.visibility = View.VISIBLE
                             setupDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.text = "Find Plex servers"
                             setupSignInAgainButton?.visibility = View.VISIBLE
                         }
@@ -150,6 +153,7 @@ class MainActivity : Activity() {
                         pendingPlexLogin = null
                         plexLoginAuthorized = false
                         if (servers.isEmpty()) {
+                            setupProgressView?.visibility = View.GONE
                             setupStatusView?.text = "No Plex Media Servers found in your account."
                             setupDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = true
                         } else {
@@ -162,6 +166,7 @@ class MainActivity : Activity() {
                     if (error is IOException) {
                         runOnUiThread {
                             if (setupDialog !== dialog || !appInForeground) return@runOnUiThread
+                            setupProgressView?.visibility = View.VISIBLE
                             setupStatusView?.text =
                                 "Cannot reach Plex right now. Retrying automatically…"
                         }
@@ -171,6 +176,7 @@ class MainActivity : Activity() {
                         plexLoginAuthorized = false
                         runOnUiThread {
                             if (setupDialog !== dialog || !appInForeground) return@runOnUiThread
+                            setupProgressView?.visibility = View.GONE
                             setupStatusView?.text = "Plex sign-in: ${friendlyAuthError(error)}"
                             setupDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.apply {
                                 text = if (plexAuth.hasAccountToken()) "Find Plex servers" else "Sign in with Plex"
@@ -453,6 +459,20 @@ class MainActivity : Activity() {
             setPadding(0, dp(12), 0, 0)
         }
         content.addView(help)
+
+        val setupProgress = ProgressBar(this).apply {
+            isIndeterminate = true
+            visibility = View.GONE
+        }
+        content.addView(
+            setupProgress,
+            LinearLayout.LayoutParams(dp(32), dp(32)).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                topMargin = dp(8)
+            },
+        )
+        setupProgressView = setupProgress
+
         if (mediaProvider == null) {
             val signInAgain = Button(this).apply {
                 text = "Sign in again"
@@ -503,6 +523,7 @@ class MainActivity : Activity() {
                 copyCode.visibility = View.GONE
                 cancel.visibility = if (required) View.GONE else View.VISIBLE
                 help.text = defaultHelp
+                setupProgress.visibility = View.GONE
                 signIn.text =
                     if (plexAuth.hasAccountToken()) "Find Plex servers" else "Sign in with Plex"
                 signIn.isEnabled = true
@@ -517,6 +538,7 @@ class MainActivity : Activity() {
                 copyCode.visibility = View.GONE
                 cancel.visibility = if (required) View.GONE else View.VISIBLE
                 help.text = defaultHelp
+                setupProgress.visibility = View.GONE
                 signIn.isEnabled = true
                 val providerType = providers[spinner.selectedItemPosition]
                 signIn.text = when (providerType) {
@@ -593,6 +615,7 @@ class MainActivity : Activity() {
                             signIn.isEnabled = false
                             cancel.visibility = View.VISIBLE
                             cancelPlexLogin()
+                            setupProgress.visibility = View.VISIBLE
                             help.text = "Opening Plex sign-in…"
                             val generation = ++plexLoginGeneration
                             beginPlexSignIn(help, signIn, generation)
@@ -603,6 +626,7 @@ class MainActivity : Activity() {
                         signIn.isEnabled = false
                         copyCode.visibility = View.GONE
                         cancel.visibility = View.VISIBLE
+                        setupProgress.visibility = View.VISIBLE
                         help.text = "Connecting to Jellyfin…"
                         val generation = ++jellyfinLoginGeneration
                         beginJellyfinSignIn(
@@ -628,6 +652,7 @@ class MainActivity : Activity() {
                 plexLoginAuthorized = false
                 setupDialog = null
                 setupStatusView = null
+                setupProgressView = null
                 setupSignInAgainButton = null
             }
         }
@@ -703,6 +728,7 @@ class MainActivity : Activity() {
                 pendingJellyfinLogin = pending
                 runOnUiThread {
                     if (generation != jellyfinLoginGeneration || setupDialog == null) return@runOnUiThread
+                    setupProgressView?.visibility = View.GONE
                     status.text =
                         "Quick Connect code: ${pending.code}\n\n" +
                             "Open Jellyfin Settings → Quick Connect, enter this code and approve SideSubs."
@@ -719,6 +745,7 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     if (generation != jellyfinLoginGeneration) return@runOnUiThread
                     pendingJellyfinLogin = null
+                    setupProgressView?.visibility = View.GONE
                     status.text = "Jellyfin: ${friendlyError(error)}"
                     button.text = "Connect to Jellyfin"
                     button.isEnabled = true
@@ -737,6 +764,7 @@ class MainActivity : Activity() {
                 pendingPlexLogin = pending
                 runOnUiThread {
                     if (generation != plexLoginGeneration || setupDialog == null) return@runOnUiThread
+                    setupProgressView?.visibility = View.GONE
                     status.text = "Complete sign-in in your browser, then return to SideSubs."
                     val intent = Intent(Intent.ACTION_VIEW, Uri.parse(pending.authUrl))
                     startActivity(intent)
@@ -749,6 +777,7 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     if (generation != plexLoginGeneration) return@runOnUiThread
                     pendingPlexLogin = null
+                    setupProgressView?.visibility = View.GONE
                     status.text = "Plex sign-in: ${friendlyAuthError(error)}"
                     button.isEnabled = true
                 }
@@ -790,9 +819,30 @@ class MainActivity : Activity() {
     ) {
         stateView.text = "Checking connections to ${server.name}…"
         val cancelled = AtomicBoolean(false)
+        val progressText = TextView(this).apply {
+            text = "Checking available server addresses…"
+            setTextColor(0xFFCCCCCC.toInt())
+            textSize = 14f
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val progressBody = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(24), dp(8), dp(24), dp(8))
+            addView(
+                ProgressBar(this@MainActivity).apply { isIndeterminate = true },
+                LinearLayout.LayoutParams(dp(32), dp(32)).apply {
+                    rightMargin = dp(16)
+                },
+            )
+            addView(
+                progressText,
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+            )
+        }
         val progress = AlertDialog.Builder(this)
             .setTitle("Connecting to ${server.name}")
-            .setMessage("Checking available server addresses…")
+            .setView(progressBody)
             .setNegativeButton("Cancel") { _, _ ->
                 cancelled.set(true)
                 stateView.text = if (mediaProvider == null) "Choose a media server"
@@ -816,7 +866,7 @@ class MainActivity : Activity() {
                     ) throw error
                     diagnostics.add("Initial post-login Plex probe failed; refreshing server addresses once")
                     runOnUiThread {
-                        if (progress.isShowing) progress.setMessage("Refreshing Plex server addresses…")
+                        if (progress.isShowing) progressText.text = "Refreshing Plex server addresses…"
                     }
                     val refreshed = plexAuth.listServers().firstOrNull { it.id == server.id }
                         ?: throw error
@@ -1481,6 +1531,7 @@ class MainActivity : Activity() {
     private fun loadServerChooser(required: Boolean = false) {
         if (setupDialog == null) showProviderSetup(required, "Finding Plex servers…")
         setupStatusView?.text = "Finding Plex servers…"
+        setupProgressView?.visibility = View.VISIBLE
         setupDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = false
         val dialog = setupDialog
         executor.execute {
@@ -1489,6 +1540,7 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     if (setupDialog !== dialog) return@runOnUiThread
                     if (servers.isEmpty()) {
+                        setupProgressView?.visibility = View.GONE
                         setupStatusView?.text = "No Plex Media Servers found in your account."
                         setupDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = true
                     } else {
@@ -1500,6 +1552,7 @@ class MainActivity : Activity() {
                 diagnostics.add("Load Plex servers failed: ${error.javaClass.simpleName}")
                 runOnUiThread {
                     if (setupDialog !== dialog) return@runOnUiThread
+                    setupProgressView?.visibility = View.GONE
                     setupStatusView?.text = friendlyAuthError(error)
                     setupDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = true
                 }
