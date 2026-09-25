@@ -39,6 +39,10 @@ import android.widget.Toast
 import java.io.PrintWriter
 import java.io.StringWriter
 import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
+import java.nio.charset.StandardCharsets
+import org.json.JSONObject
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -101,6 +105,7 @@ class MainActivity : Activity() {
     private var loggedSessionCount = -1
     private var loggedSessionState = ""
     private var loggedPollError = ""
+    private var pendingUpdateNotice: UpdateInfo? = null
 
     private val pollTask = object : Runnable {
         override fun run() {
@@ -203,6 +208,7 @@ class MainActivity : Activity() {
         diagnostics.add("App started; savedProvider=" + preferences.getString(PlexAuthManager.KEY_PROVIDER, "").orEmpty())
         installCrashRecorder()
         buildUi()
+        checkForUpdatesIfNeeded()
 
         val afterCrash = {
             when {
@@ -242,6 +248,7 @@ class MainActivity : Activity() {
             handler.removeCallbacks(authPollTask)
             handler.post(authPollTask)
         }
+        maybeShowPendingUpdateNotice()
     }
 
     override fun onPause() {
@@ -949,6 +956,7 @@ class MainActivity : Activity() {
         stateView.text = "Connecting to ${connection.serverName}…"
         Toast.makeText(this, "Connected to ${connection.serverName}", Toast.LENGTH_SHORT).show()
         startPolling()
+        maybeShowPendingUpdateNotice()
     }
 
     private fun startPolling() {
@@ -1461,12 +1469,35 @@ class MainActivity : Activity() {
                 }
             )
 
+            val installedVersion = appVersionName()
             addView(label("Version"))
-            addView(
-                valueText(
-                    packageManager.getPackageInfo(packageName, 0).versionName ?: "Unknown"
+            addView(valueText(installedVersion))
+
+            if (!installedVersion.contains("-dev", ignoreCase = true)) {
+                addView(label("Update"))
+                val latestVersion = preferences.getString(KEY_LATEST_VERSION, "").orEmpty()
+                val latestUrl = preferences.getString(KEY_LATEST_RELEASE_URL, "").orEmpty()
+                val updateAvailable =
+                    latestVersion.isNotBlank() && isVersionNewer(latestVersion, installedVersion)
+                addView(
+                    TextView(this@MainActivity).apply {
+                        text = when {
+                            updateAvailable -> "$latestVersion available"
+                            latestVersion.isNotBlank() -> "Up to date"
+                            else -> "Not checked yet"
+                        }
+                        setTextColor(if (updateAvailable) 0xFF90CAF9.toInt() else 0xFFCCCCCC.toInt())
+                        textSize = 15f
+                        isClickable = updateAvailable && latestUrl.isNotBlank()
+                        isFocusable = isClickable
+                        if (isClickable) {
+                            setOnClickListener {
+                                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(latestUrl)))
+                            }
+                        }
+                    }
                 )
-            )
+            }
 
             if (provider != null) {
                 addView(label("Media server"))
@@ -1516,6 +1547,109 @@ class MainActivity : Activity() {
             .setPositiveButton("Close", null)
             .show()
     }
+
+    private fun appVersionName(): String =
+        packageManager.getPackageInfo(packageName, 0).versionName ?: "Unknown"
+
+    private fun checkForUpdatesIfNeeded() {
+        val installedVersion = appVersionName()
+        if (installedVersion.contains("-dev", ignoreCase = true)) return
+
+        val now = System.currentTimeMillis()
+        val lastCheck = preferences.getLong(KEY_LAST_UPDATE_CHECK_MS, 0L)
+        if (now - lastCheck < UPDATE_CHECK_INTERVAL_MS) {
+            prepareCachedUpdateNotice(installedVersion)
+            return
+        }
+
+        preferences.edit().putLong(KEY_LAST_UPDATE_CHECK_MS, now).apply()
+        executor.execute {
+            try {
+                val connection = URL(GITHUB_LATEST_RELEASE_API).openConnection() as HttpURLConnection
+                connection.connectTimeout = 5_000
+                connection.readTimeout = 8_000
+                connection.useCaches = false
+                connection.setRequestProperty("Accept", "application/vnd.github+json")
+                connection.setRequestProperty("User-Agent", "SideSubs-Android")
+
+                val status = connection.responseCode
+                val payload = (if (status in 200..299) connection.inputStream else connection.errorStream)
+                    ?.use { it.readBytes().toString(StandardCharsets.UTF_8) }
+                    .orEmpty()
+                connection.disconnect()
+                if (status !in 200..299) error("GitHub HTTP $status")
+
+                val json = JSONObject(payload)
+                val latestVersion = json.optString("tag_name").removePrefix("v").trim()
+                val releaseUrl = json.optString("html_url").trim()
+                if (latestVersion.isBlank()) return@execute
+
+                preferences.edit()
+                    .putString(KEY_LATEST_VERSION, latestVersion)
+                    .putString(KEY_LATEST_RELEASE_URL, releaseUrl)
+                    .apply()
+
+                if (isVersionNewer(latestVersion, installedVersion)) {
+                    pendingUpdateNotice = UpdateInfo(latestVersion, releaseUrl)
+                    runOnUiThread { maybeShowPendingUpdateNotice() }
+                }
+            } catch (error: Exception) {
+                diagnostics.add("Update check failed: ${error.javaClass.simpleName}")
+            }
+        }
+    }
+
+    private fun prepareCachedUpdateNotice(installedVersion: String) {
+        val latestVersion = preferences.getString(KEY_LATEST_VERSION, "").orEmpty()
+        val releaseUrl = preferences.getString(KEY_LATEST_RELEASE_URL, "").orEmpty()
+        if (latestVersion.isNotBlank() && isVersionNewer(latestVersion, installedVersion)) {
+            pendingUpdateNotice = UpdateInfo(latestVersion, releaseUrl)
+            maybeShowPendingUpdateNotice()
+        }
+    }
+
+    private fun maybeShowPendingUpdateNotice() {
+        val update = pendingUpdateNotice ?: return
+        if (!appInForeground || setupDialog != null || isFinishing) return
+        if (preferences.getString(KEY_LAST_NOTIFIED_VERSION, "").orEmpty() == update.version) {
+            pendingUpdateNotice = null
+            return
+        }
+
+        pendingUpdateNotice = null
+        preferences.edit().putString(KEY_LAST_NOTIFIED_VERSION, update.version).apply()
+
+        AlertDialog.Builder(this)
+            .setTitle("SideSubs update available")
+            .setMessage(
+                "Version ${update.version} is available.\n" +
+                    "You are currently using ${appVersionName()}."
+            )
+            .setNegativeButton("Later", null)
+            .setPositiveButton("View update") { _, _ ->
+                if (update.url.isNotBlank()) {
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(update.url)))
+                }
+            }
+            .show()
+    }
+
+    private fun isVersionNewer(candidate: String, current: String): Boolean {
+        val a = candidate.substringBefore('-').split('.').map { it.toIntOrNull() ?: 0 }
+        val b = current.substringBefore('-').split('.').map { it.toIntOrNull() ?: 0 }
+        val size = maxOf(a.size, b.size)
+        for (index in 0 until size) {
+            val av = a.getOrElse(index) { 0 }
+            val bv = b.getOrElse(index) { 0 }
+            if (av != bv) return av > bv
+        }
+        return false
+    }
+
+    private data class UpdateInfo(
+        val version: String,
+        val url: String,
+    )
 
     private fun showDiagnosticLog() {
         val log = diagnostics.read()
@@ -2049,6 +2183,13 @@ class MainActivity : Activity() {
         const val KEY_SUBTITLE_SIZE = "subtitle_size"
         const val KEY_DELAY_MS = "subtitle_delay_ms"
         const val KEY_LAST_CRASH = "last_crash"
+        const val KEY_LAST_UPDATE_CHECK_MS = "last_update_check_ms"
+        const val KEY_LAST_NOTIFIED_VERSION = "last_notified_version"
+        const val KEY_LATEST_VERSION = "latest_known_version"
+        const val KEY_LATEST_RELEASE_URL = "latest_release_url"
+        const val GITHUB_LATEST_RELEASE_API =
+            "https://api.github.com/repos/soyxan/sidesubs/releases/latest"
+        const val UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000L
         const val MIN_DELAY_MS = -5000
         const val MAX_DELAY_MS = 5000
         const val DELAY_STEP_MS = 250
