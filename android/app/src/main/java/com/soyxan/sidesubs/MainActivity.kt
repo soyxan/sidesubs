@@ -1338,21 +1338,31 @@ class MainActivity : Activity() {
 
         content.addView(label("Media server"))
         content.addView(valueText(provider.providerType.displayName))
-        val signOutButton = Button(this).apply {
-            text = "Sign out"
-            isAllCaps = false
-            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+        val signOutButton = TextView(this).apply {
+            text = "SIGN OUT"
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            isClickable = true
+            isFocusable = true
+            setPadding(dp(12), dp(6), 0, dp(6))
+            minHeight = dp(40)
         }
-        content.addView(signOutButton)
+        content.addView(signOutButton, matchWrap())
 
         content.addView(label("Connected server"))
         content.addView(valueText(provider.serverName))
-        val changeServerButton = Button(this).apply {
-            text = "Change server"
-            isAllCaps = false
-            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+        val changeServerButton = TextView(this).apply {
+            text = "CHANGE SERVER"
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            isClickable = true
+            isFocusable = true
+            setPadding(dp(12), dp(6), 0, dp(6))
+            minHeight = dp(40)
         }
-        content.addView(changeServerButton)
+        content.addView(changeServerButton, matchWrap())
 
         content.addView(label("Preferred subtitle language"))
 
