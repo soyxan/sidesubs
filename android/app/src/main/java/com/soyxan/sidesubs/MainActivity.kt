@@ -1458,6 +1458,8 @@ class MainActivity : Activity() {
     private fun showAbout() {
         val provider = mediaProvider
         val session = selectedSession
+        val installedVersion = appVersionName()
+        var updateStatusView: TextView? = null
 
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1472,34 +1474,17 @@ class MainActivity : Activity() {
                 }
             )
 
-            val installedVersion = appVersionName()
             addView(label("Version"))
             addView(valueText(installedVersion))
 
             if (!installedVersion.contains("-dev", ignoreCase = true)) {
                 addView(label("Update"))
-                val latestVersion = preferences.getString(KEY_LATEST_VERSION, "").orEmpty()
-                val latestUrl = preferences.getString(KEY_LATEST_RELEASE_URL, "").orEmpty()
-                val updateAvailable =
-                    latestVersion.isNotBlank() && isVersionNewer(latestVersion, installedVersion)
-                addView(
-                    TextView(this@MainActivity).apply {
-                        text = when {
-                            updateAvailable -> "$latestVersion available"
-                            latestVersion.isNotBlank() -> "Up to date"
-                            else -> "Not checked yet"
-                        }
-                        setTextColor(if (updateAvailable) 0xFF90CAF9.toInt() else 0xFFCCCCCC.toInt())
-                        textSize = 15f
-                        isClickable = updateAvailable && latestUrl.isNotBlank()
-                        isFocusable = isClickable
-                        if (isClickable) {
-                            setOnClickListener {
-                                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(latestUrl)))
-                            }
-                        }
-                    }
-                )
+                updateStatusView = TextView(this@MainActivity).apply {
+                    text = "Checking…"
+                    setTextColor(0xFFCCCCCC.toInt())
+                    textSize = 15f
+                }
+                addView(updateStatusView)
             }
 
             if (provider != null) {
@@ -1549,10 +1534,72 @@ class MainActivity : Activity() {
             .setView(content)
             .setPositiveButton("Close", null)
             .show()
+
+        updateStatusView?.let { checkForUpdatesFromAbout(installedVersion, it) }
     }
 
     private fun appVersionName(): String =
         packageManager.getPackageInfo(packageName, 0).versionName ?: "Unknown"
+
+    private fun checkForUpdatesFromAbout(installedVersion: String, statusView: TextView) {
+        preferences.edit().putLong(KEY_LAST_UPDATE_CHECK_MS, System.currentTimeMillis()).apply()
+        executor.execute {
+            try {
+                val connection = URL(GITHUB_LATEST_RELEASE_API).openConnection() as HttpURLConnection
+                connection.connectTimeout = 5_000
+                connection.readTimeout = 8_000
+                connection.useCaches = false
+                connection.setRequestProperty("Accept", "application/vnd.github+json")
+                connection.setRequestProperty("User-Agent", "SideSubs-Android")
+
+                val status = connection.responseCode
+                val payload = (if (status in 200..299) connection.inputStream else connection.errorStream)
+                    ?.use { it.readBytes().toString(StandardCharsets.UTF_8) }
+                    .orEmpty()
+                connection.disconnect()
+                if (status !in 200..299) error("GitHub HTTP $status")
+
+                val json = JSONObject(payload)
+                val latestVersion = json.optString("tag_name").removePrefix("v").trim()
+                val releaseUrl = json.optString("html_url").trim()
+                if (latestVersion.isBlank()) error("GitHub release has no version")
+
+                preferences.edit()
+                    .putString(KEY_LATEST_VERSION, latestVersion)
+                    .putString(KEY_LATEST_RELEASE_URL, releaseUrl)
+                    .apply()
+
+                runOnUiThread {
+                    val updateAvailable = isVersionNewer(latestVersion, installedVersion)
+                    statusView.text =
+                        if (updateAvailable) "$latestVersion available" else "Up to date"
+                    statusView.setTextColor(
+                        if (updateAvailable) 0xFF90CAF9.toInt() else 0xFFCCCCCC.toInt()
+                    )
+                    statusView.isClickable = updateAvailable && releaseUrl.isNotBlank()
+                    statusView.isFocusable = statusView.isClickable
+                    statusView.setOnClickListener(
+                        if (statusView.isClickable) {
+                            View.OnClickListener {
+                                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(releaseUrl)))
+                            }
+                        } else {
+                            null
+                        }
+                    )
+                }
+            } catch (error: Exception) {
+                diagnostics.add("About update check failed: ${error.javaClass.simpleName}")
+                runOnUiThread {
+                    statusView.text = "Could not check for updates"
+                    statusView.setTextColor(0xFFCCCCCC.toInt())
+                    statusView.isClickable = false
+                    statusView.isFocusable = false
+                    statusView.setOnClickListener(null)
+                }
+            }
+        }
+    }
 
     private fun checkForUpdatesIfNeeded() {
         val installedVersion = appVersionName()
