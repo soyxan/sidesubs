@@ -947,6 +947,7 @@ class MainActivity : Activity() {
         playbackClock.clear()
         clearLoadedSubtitle()
         stateView.text = "Connecting to ${connection.serverName}…"
+        Toast.makeText(this, "Connected to ${connection.serverName}", Toast.LENGTH_SHORT).show()
         startPolling()
     }
 
