@@ -1217,6 +1217,11 @@ class MainActivity : Activity() {
                 playbackClock.clear()
                 clearLoadedSubtitle()
                 dialog.dismiss()
+                Toast.makeText(
+                    this,
+                    "Following ${item.displayClient()}",
+                    Toast.LENGTH_SHORT,
+                ).show()
                 pollOnce()
             }
             .setNegativeButton("Cancel", null)
@@ -1255,6 +1260,12 @@ class MainActivity : Activity() {
                 selectedTrack = null
                 timeline = null
                 dialog.dismiss()
+                val subtitleToast = if (which == 0) {
+                    "Subtitles set to automatic"
+                } else {
+                    "Subtitles: ${compatible[which - 1].label()}"
+                }
+                Toast.makeText(this, subtitleToast, Toast.LENGTH_SHORT).show()
                 pollOnce()
             }
             .setNegativeButton("Cancel", null)
