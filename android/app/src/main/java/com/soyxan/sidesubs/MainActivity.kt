@@ -1338,31 +1338,59 @@ class MainActivity : Activity() {
 
         content.addView(label("Media server"))
         content.addView(valueText(provider.providerType.displayName))
-        val signOutButton = TextView(this).apply {
+        val signOutButton = Button(
+            this,
+            null,
+            android.R.attr.borderlessButtonStyle,
+        ).apply {
             text = "SIGN OUT"
+            isAllCaps = false
             setTextColor(Color.WHITE)
             textSize = 14f
-            gravity = Gravity.END or Gravity.CENTER_VERTICAL
-            isClickable = true
-            isFocusable = true
-            setPadding(dp(12), dp(6), 0, dp(6))
+            gravity = Gravity.CENTER
             minHeight = dp(40)
+            minimumHeight = 0
+            minWidth = 0
+            minimumWidth = 0
+            setPadding(dp(12), 0, dp(12), 0)
         }
-        content.addView(signOutButton, matchWrap())
+        content.addView(
+            signOutButton,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                dp(40),
+            ).apply {
+                gravity = Gravity.END
+            },
+        )
 
         content.addView(label("Connected server"))
         content.addView(valueText(provider.serverName))
-        val changeServerButton = TextView(this).apply {
+        val changeServerButton = Button(
+            this,
+            null,
+            android.R.attr.borderlessButtonStyle,
+        ).apply {
             text = "CHANGE SERVER"
+            isAllCaps = false
             setTextColor(Color.WHITE)
             textSize = 14f
-            gravity = Gravity.END or Gravity.CENTER_VERTICAL
-            isClickable = true
-            isFocusable = true
-            setPadding(dp(12), dp(6), 0, dp(6))
+            gravity = Gravity.CENTER
             minHeight = dp(40)
+            minimumHeight = 0
+            minWidth = 0
+            minimumWidth = 0
+            setPadding(dp(12), 0, dp(12), 0)
         }
-        content.addView(changeServerButton, matchWrap())
+        content.addView(
+            changeServerButton,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                dp(40),
+            ).apply {
+                gravity = Gravity.END
+            },
+        )
 
         content.addView(label("Preferred subtitle language"))
 
