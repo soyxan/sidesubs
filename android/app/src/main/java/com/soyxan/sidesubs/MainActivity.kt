@@ -105,6 +105,7 @@ class MainActivity : Activity() {
     private var loggedSessionCount = -1
     private var loggedSessionState = ""
     private var loggedPollError = ""
+    private var lastLanguageFallbackNotice = ""
     private var pendingUpdateNotice: UpdateInfo? = null
 
     private val pollTask = object : Runnable {
@@ -1137,6 +1138,8 @@ class MainActivity : Activity() {
         }
         subtitleButton.isEnabled = tracks.isNotEmpty()
 
+        maybeShowLanguageFallback(session.mediaId, track)
+
         val delayMs = preferences.getInt(KEY_DELAY_MS, 1000)
         val effectivePosition = max(0.0, position - delayMs / 1000.0)
         val (current, next) = cuePair(freshTimeline?.cues, effectivePosition)
@@ -1752,8 +1755,16 @@ class MainActivity : Activity() {
         backgroundTintList = ColorStateList.valueOf(0xFF888888.toInt())
     }
 
-    private fun preferredLanguage(): String =
-        preferences.getString(KEY_LANGUAGE, "es") ?: "es"
+    private fun preferredLanguage(): String {
+        val stored = preferences.getString(KEY_LANGUAGE, null)
+        if (stored.isNullOrBlank() || stored.equals("es", ignoreCase = true)) {
+            if (stored != "es-ES") {
+                preferences.edit().putString(KEY_LANGUAGE, "es-ES").apply()
+            }
+            return "es-ES"
+        }
+        return stored
+    }
 
     private fun languageOption(code: String): LanguageOption {
         LANGUAGE_OPTIONS.firstOrNull { it.code.equals(code, ignoreCase = true) }?.let { return it }
@@ -1809,6 +1820,35 @@ class MainActivity : Activity() {
         if (exactRegion && wanted.contains("-")) return tag == wanted
         return track.language.equals(base, ignoreCase = true) ||
             tag.substringBefore("-").equals(base, ignoreCase = true)
+    }
+
+    private fun maybeShowLanguageFallback(mediaId: String, track: SubtitleTrack?) {
+        if (track == null || preferredTrackId(mediaId).isNotEmpty()) return
+
+        val preferred = preferredLanguage().lowercase(Locale.US)
+        if (!preferred.contains("-")) return
+
+        val actualTag = track.providerData["languageTag"]
+            .orEmpty()
+            .lowercase(Locale.US)
+            .ifBlank { track.language.lowercase(Locale.US) }
+        if (actualTag.isBlank() || actualTag == preferred) return
+        if (actualTag.substringBefore("-") != preferred.substringBefore("-")) return
+
+        val noticeKey = "$mediaId|$preferred|$actualTag"
+        if (noticeKey == lastLanguageFallbackNotice) return
+        lastLanguageFallbackNotice = noticeKey
+
+        val preferredLabel = languageOption(preferred).label
+        val actualLabel = languageOption(actualTag).label
+        Toast.makeText(
+            this,
+            "$preferredLabel not available. Using $actualLabel",
+            Toast.LENGTH_LONG,
+        ).show()
+        diagnostics.add(
+            "Subtitle language fallback: preferred=$preferred actual=$actualTag media=$mediaId"
+        )
     }
 
     private fun preferredSubtitleSize(): String =
