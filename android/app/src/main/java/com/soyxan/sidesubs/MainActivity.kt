@@ -1338,8 +1338,22 @@ class MainActivity : Activity() {
 
         content.addView(label("Media server"))
         content.addView(valueText(provider.providerType.displayName))
+        val signOutButton = Button(this).apply {
+            text = "Sign out"
+            isAllCaps = false
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+        }
+        content.addView(signOutButton)
+
         content.addView(label("Connected server"))
         content.addView(valueText(provider.serverName))
+        val changeServerButton = Button(this).apply {
+            text = "Change server"
+            isAllCaps = false
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+        }
+        content.addView(changeServerButton)
+
         content.addView(label("Preferred subtitle language"))
 
         var selectedLanguage = preferredLanguage()
@@ -1374,8 +1388,7 @@ class MainActivity : Activity() {
             .setCustomTitle(dialogTitleWithMenu("SideSubs settings"))
             .setView(scroll)
             .setPositiveButton("Save", null)
-            .setNeutralButton("Change server", null)
-            .setNegativeButton("Sign out", null)
+            .setNegativeButton("Cancel", null)
             .create()
 
         dialog.setOnShowListener {
@@ -1387,14 +1400,14 @@ class MainActivity : Activity() {
                 dialog.dismiss()
                 pollOnce()
             }
-            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+            changeServerButton.setOnClickListener {
                 dialog.dismiss()
                 when (provider.providerType) {
                     MediaProviderType.PLEX -> loadServerChooser()
                     MediaProviderType.JELLYFIN -> showProviderSetup(required = false)
                 }
             }
-            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
+            signOutButton.setOnClickListener {
                 dialog.dismiss()
                 confirmSignOut()
             }
