@@ -130,16 +130,8 @@ class PlexClient(
     }
 
     private fun fetchEmbedded(mediaId: String, track: SubtitleTrack): SubtitleTimeline {
-        val oldStreamId = metadata(mediaId).tracks
-            .firstOrNull { it.selected }
-            ?.providerData
-            ?.get("streamId")
-            ?.toIntOrNull()
-            ?: 0
         val streamId = track.providerData["streamId"]?.toIntOrNull()
             ?: error("Missing Plex stream id")
-        val partId = track.providerData["partId"]?.toIntOrNull()
-            ?: error("Missing Plex part id")
         val transcodeSession = UUID.randomUUID().toString().replace("-", "").take(24)
         val playbackSession = UUID.randomUUID().toString().replace("-", "")
 
@@ -163,61 +155,37 @@ class PlexClient(
             "subtitleStreamID" to streamId.toString(),
         )
 
-        val changedSelection = oldStreamId != streamId
-        if (changedSelection) {
-            diagnostics.add("Selecting embedded subtitle track temporarily")
-            selectSubtitle(partId, streamId)
-        }
-
-        try {
-            diagnostics.add("Requesting Plex subtitle transcode decision")
-            request(
-                method = "GET",
-                path = "/video/:/transcode/universal/decision",
-                params = LinkedHashMap(common).apply { put("protocol", "hls") },
-                readTimeoutMs = READ_TIMEOUT_MS,
-                accept = "application/json",
-                playbackSessionId = playbackSession,
-            )
-            diagnostics.add("Plex subtitle transcode decision received")
-            diagnostics.add("Downloading complete embedded subtitle")
-
-            val payload = request(
-                method = "GET",
-                path = "/subtitles/:/transcode/universal/start",
-                params = LinkedHashMap(common).apply {
-                    put("protocol", "http")
-                    put("copyts", "1")
-                    put("offset", "0")
-                },
-                readTimeoutMs = SUBTITLE_TIMEOUT_MS,
-                accept = "application/json",
-                playbackSessionId = playbackSession,
-            )
-
-            diagnostics.add("Embedded subtitle downloaded: bytes=${payload.size}")
-            val cues = SubtitleParser.parse(payload.toString(StandardCharsets.UTF_8))
-            check(cues.isNotEmpty()) { "Plex returned a subtitle with no parseable cues" }
-            return SubtitleTimeline(cues)
-        } finally {
-            if (changedSelection) {
-                val restored = runCatching { selectSubtitle(partId, oldStreamId) }
-                diagnostics.add(
-                    if (restored.isSuccess) "Original Plex subtitle track restored"
-                    else "Failed to restore original Plex subtitle track: ${failureKind(restored.exceptionOrNull()!!)}"
-                )
-            }
-        }
-    }
-
-    private fun selectSubtitle(partId: Int, streamId: Int) {
+        diagnostics.add("Requesting Plex subtitle transcode decision")
         request(
-            method = "PUT",
-            path = "/library/parts/$partId",
-            params = mapOf("allParts" to "1", "subtitleStreamID" to streamId.toString()),
+            method = "GET",
+            path = "/video/:/transcode/universal/decision",
+            params = LinkedHashMap(common).apply { put("protocol", "hls") },
             readTimeoutMs = READ_TIMEOUT_MS,
-            accept = "*/*",
+            accept = "application/json",
+            playbackSessionId = playbackSession,
         )
+        diagnostics.add("Plex subtitle transcode decision received")
+        diagnostics.add("Downloading complete embedded subtitle")
+
+        val payload = request(
+            method = "GET",
+            path = "/subtitles/:/transcode/universal/subtitles",
+            params = linkedMapOf(
+                "transcodeSessionId" to transcodeSession,
+                "path" to "/library/metadata/$mediaId",
+                "mediaIndex" to "0",
+                "partIndex" to "0",
+                "subtitleStreamID" to streamId.toString(),
+            ),
+            readTimeoutMs = SUBTITLE_TIMEOUT_MS,
+            accept = "*/*",
+            playbackSessionId = playbackSession,
+        )
+
+        diagnostics.add("Embedded subtitle downloaded: bytes=${payload.size}")
+        val cues = SubtitleParser.parse(payload.toString(StandardCharsets.UTF_8))
+        check(cues.isNotEmpty()) { "Plex returned a subtitle with no parseable cues" }
+        return SubtitleTimeline(cues)
     }
 
     private fun metadata(mediaId: String): MetadataData {
