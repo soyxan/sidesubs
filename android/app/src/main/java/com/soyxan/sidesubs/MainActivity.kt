@@ -102,6 +102,7 @@ class MainActivity : Activity() {
     private var selectedTrack: SubtitleTrack? = null
     private var timeline: SubtitleTimeline? = null
     private var loadedMediaId = ""
+    private var deferredSubtitleMediaId = ""
     private var loggedSessionCount = -1
     private var loggedSessionState = ""
     private var loggedPollError = ""
@@ -1026,6 +1027,37 @@ class MainActivity : Activity() {
                 )
 
                 if (!isCurrentPlayback(provider, generation)) return@execute
+                val isNewMedia = loadedMediaId.isNotEmpty() && session.mediaId != loadedMediaId
+                if (isNewMedia && position < NEW_MEDIA_SUBTITLE_DELAY_SECONDS) {
+                    if (deferredSubtitleMediaId != session.mediaId) {
+                        deferredSubtitleMediaId = session.mediaId
+                        diagnostics.add(
+                            "Deferring subtitle load for new media=${session.mediaId} " +
+                                "until ${NEW_MEDIA_SUBTITLE_DELAY_SECONDS.toInt()}s"
+                        )
+                    }
+                    loggedPollError = ""
+                    runOnUiThread {
+                        if (!isCurrentPlayback(provider, generation)) return@runOnUiThread
+                        sessions = freshSessions
+                        selectedSession = session
+                        titleView.text = session.title
+                        stateView.text =
+                            "${session.displayClient()} · ${formatPlaybackTime(position)} · ${session.state}"
+                        sessionButton.text = session.displayClient()
+                        subtitleButton.text = "Loading subtitles…"
+                        subtitleButton.isEnabled = false
+                        currentSubtitleView.text = ""
+                        nextSubtitleView.text = ""
+                    }
+                    return@execute
+                }
+
+                if (deferredSubtitleMediaId == session.mediaId) {
+                    diagnostics.add("Deferred subtitle load starting: media=${session.mediaId}")
+                    deferredSubtitleMediaId = ""
+                }
+
                 var freshTracks = tracks
                 var track = selectedTrack
                 var freshTimeline = timeline
@@ -2005,6 +2037,7 @@ class MainActivity : Activity() {
 
     private fun clearLoadedSubtitle() {
         loadedMediaId = ""
+        deferredSubtitleMediaId = ""
         tracks = emptyList()
         selectedTrack = null
         timeline = null
@@ -2333,6 +2366,7 @@ class MainActivity : Activity() {
         const val DELAY_STEP_MS = 250
         const val DELAY_CONTROLS_TIMEOUT_MS = 3000L
         const val NEXT_PREVIEW_SECONDS = 4.0
+        const val NEW_MEDIA_SUBTITLE_DELAY_SECONDS = 10.0
         const val POLL_INTERVAL_MS = 750L
         const val AUTH_POLL_INTERVAL_MS = 3_000L
         const val NETWORK_RETRY_INTERVAL_MS = 3_000L
