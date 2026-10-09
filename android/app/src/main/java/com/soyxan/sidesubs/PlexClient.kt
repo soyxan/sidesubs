@@ -4,6 +4,7 @@ import android.net.Uri
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
@@ -18,11 +19,15 @@ class PlexClient(
     private val clientIdentifier: String,
     override val serverName: String,
     private val diagnostics: DiagnosticLog,
+    subtitleCacheDir: File? = null,
 ) : MediaProvider {
     override val providerType = MediaProviderType.PLEX
     val serverUrl: String = normalizeBaseUrl(baseUrl)
     override val serverAddress: String = Uri.parse(serverUrl).encodedAuthority.orEmpty()
     private val token = token.trim()
+    private val persistentSubtitleCacheDir = subtitleCacheDir?.let { root ->
+        File(root, serverUrl.hashCode().toString()).apply { mkdirs() }
+    }
 
     private val subtitleCache = object : LinkedHashMap<String, SubtitleTimeline>(32, 0.75f, true) {
         override fun removeEldestEntry(
@@ -132,6 +137,14 @@ class PlexClient(
     private fun fetchEmbedded(mediaId: String, track: SubtitleTrack): SubtitleTimeline {
         val streamId = track.providerData["streamId"]?.toIntOrNull()
             ?: error("Missing Plex stream id")
+
+        readPersistentSubtitle(mediaId, streamId)?.let { cached ->
+            diagnostics.add(
+                "Persistent subtitle cache hit: media=$mediaId stream=$streamId cues=${cached.cues.size}"
+            )
+            return cached
+        }
+
         val initialMetadata = metadata(mediaId)
         val partId = initialMetadata.partId
         check(partId > 0) { "Missing Plex part id" }
@@ -197,14 +210,64 @@ class PlexClient(
             )
 
             diagnostics.add("Embedded subtitle downloaded: bytes=${payload.size}")
-            val cues = SubtitleParser.parse(payload.toString(StandardCharsets.UTF_8))
+            val text = payload.toString(StandardCharsets.UTF_8)
+            val cues = SubtitleParser.parse(text)
             check(cues.isNotEmpty()) { "Plex returned a subtitle with no parseable cues" }
+            writePersistentSubtitle(mediaId, streamId, text)
             return SubtitleTimeline(cues)
         } finally {
             if (selectionChanged) {
                 restoreSubtitleSelection(mediaId, partId, streamId, previousStreamId)
             }
         }
+    }
+
+    private fun readPersistentSubtitle(mediaId: String, streamId: Int): SubtitleTimeline? {
+        val dir = persistentSubtitleCacheDir ?: return null
+        val file = File(dir, "${mediaId}_${streamId}.srt")
+        if (!file.isFile) return null
+
+        return runCatching {
+            val text = file.readText(StandardCharsets.UTF_8)
+            val cues = SubtitleParser.parse(text)
+            if (cues.isEmpty()) {
+                file.delete()
+                null
+            } else {
+                file.setLastModified(System.currentTimeMillis())
+                SubtitleTimeline(cues)
+            }
+        }.getOrElse {
+            diagnostics.add(
+                "Persistent subtitle cache read failed: media=$mediaId stream=$streamId reason=${it.javaClass.simpleName}"
+            )
+            null
+        }
+    }
+
+    private fun writePersistentSubtitle(mediaId: String, streamId: Int, text: String) {
+        val dir = persistentSubtitleCacheDir ?: return
+        runCatching {
+            dir.mkdirs()
+            val file = File(dir, "${mediaId}_${streamId}.srt")
+            file.writeText(text, StandardCharsets.UTF_8)
+            file.setLastModified(System.currentTimeMillis())
+            trimPersistentSubtitleCache(dir)
+            diagnostics.add(
+                "Persistent subtitle cached: media=$mediaId stream=$streamId bytes=${file.length()}"
+            )
+        }.onFailure {
+            diagnostics.add(
+                "Persistent subtitle cache write failed: media=$mediaId stream=$streamId reason=${it.javaClass.simpleName}"
+            )
+        }
+    }
+
+    private fun trimPersistentSubtitleCache(dir: File) {
+        val files = dir.listFiles { file -> file.isFile && file.extension.equals("srt", true) }
+            ?.sortedByDescending { it.lastModified() }
+            ?: return
+        files.drop(MAX_PERSISTENT_SUBTITLES).forEach { it.delete() }
     }
 
     private fun selectSubtitle(partId: Int, streamId: Int?) {
@@ -507,6 +570,7 @@ class PlexClient(
         const val CONNECT_TIMEOUT_MS = 5_000
         const val READ_TIMEOUT_MS = 15_000
         const val SUBTITLE_TIMEOUT_MS = 120_000
+        const val MAX_PERSISTENT_SUBTITLES = 200
         const val SELECTION_VERIFY_ATTEMPTS = 3
         const val SELECTION_RESTORE_ATTEMPTS = 4
         val SELECTION_VERIFY_DELAYS_MS = longArrayOf(100, 250)
