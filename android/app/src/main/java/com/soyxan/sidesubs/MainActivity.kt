@@ -39,6 +39,7 @@ import android.widget.Toast
 import java.io.PrintWriter
 import java.io.StringWriter
 import java.io.IOException
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.StandardCharsets
@@ -71,6 +72,8 @@ class MainActivity : Activity() {
     @Volatile private var jellyfinLoginGeneration = 0L
     @Volatile private var plexLoginAuthorized = false
     @Volatile private var appInForeground = false
+    @Volatile private var subtitleLoadGeneration = 0L
+    @Volatile private var pendingSubtitleReload = false
     private var cinemaMode = false
     private var delayControlsOpen = false
     private var hideChromeTask: Runnable? = null
@@ -102,6 +105,7 @@ class MainActivity : Activity() {
     private var selectedTrack: SubtitleTrack? = null
     private var timeline: SubtitleTimeline? = null
     private var loadedMediaId = ""
+    private var tracksMediaId = ""
     private var deferredSubtitleMediaId = ""
     private var loggedSessionCount = -1
     private var loggedSessionState = ""
@@ -936,6 +940,7 @@ class MainActivity : Activity() {
                 clientIdentifier = connection.clientIdentifier,
                 serverName = connection.serverName,
                 diagnostics = diagnostics,
+                subtitleCacheDir = File(filesDir, "plex_subtitles"),
             )
 
             MediaProviderType.JELLYFIN -> JellyfinClient(
@@ -1028,6 +1033,25 @@ class MainActivity : Activity() {
 
                 if (!isCurrentPlayback(provider, generation)) return@execute
                 val isNewMedia = loadedMediaId.isNotEmpty() && session.mediaId != loadedMediaId
+                var freshTracks = tracks
+                if (tracksMediaId != session.mediaId) {
+                    freshTracks = provider.subtitleTracks(session.mediaId)
+                    if (!isCurrentPlayback(provider, generation)) return@execute
+                }
+                var track = if (tracksMediaId == session.mediaId) selectedTrack else null
+                val wantedTrackId = preferredTrackId(session.mediaId)
+                if (track == null || (wantedTrackId.isNotEmpty() && wantedTrackId != track.id)) {
+                    track = chooseTrack(session.mediaId, freshTracks)
+                }
+
+                if (tracksMediaId != session.mediaId) {
+                    diagnostics.add(
+                        "Subtitle tracks: media=${session.mediaId} total=${freshTracks.size} " +
+                            "compatible=${freshTracks.count { it.compatible }} " +
+                            "chosen=${track?.language ?: "none"}"
+                    )
+                }
+
                 if (isNewMedia && position < NEW_MEDIA_SUBTITLE_DELAY_SECONDS) {
                     if (deferredSubtitleMediaId != session.mediaId) {
                         deferredSubtitleMediaId = session.mediaId
@@ -1039,16 +1063,14 @@ class MainActivity : Activity() {
                     loggedPollError = ""
                     runOnUiThread {
                         if (!isCurrentPlayback(provider, generation)) return@runOnUiThread
-                        sessions = freshSessions
-                        selectedSession = session
-                        titleView.text = session.title
-                        stateView.text =
-                            "${session.displayClient()} · ${formatPlaybackTime(position)} · ${session.state}"
-                        sessionButton.text = session.displayClient()
-                        subtitleButton.text = "Loading subtitles…"
-                        subtitleButton.isEnabled = false
-                        currentSubtitleView.text = ""
-                        nextSubtitleView.text = ""
+                        publishSubtitlePendingState(
+                            freshSessions,
+                            session,
+                            freshTracks,
+                            track,
+                            position,
+                            "Waiting to load subtitles…",
+                        )
                     }
                     return@execute
                 }
@@ -1058,28 +1080,28 @@ class MainActivity : Activity() {
                     deferredSubtitleMediaId = ""
                 }
 
-                var freshTracks = tracks
-                var track = selectedTrack
-                var freshTimeline = timeline
-                val needsTimeline = session.mediaId != loadedMediaId
-
+                var freshTimeline = if (session.mediaId == loadedMediaId) timeline else null
+                val needsTimeline = track != null && freshTimeline == null
+                val loadGeneration = subtitleLoadGeneration
                 if (needsTimeline) {
-                    freshTracks = provider.subtitleTracks(session.mediaId)
-                    if (!isCurrentPlayback(provider, generation)) return@execute
-                    track = chooseTrack(session.mediaId, freshTracks)
-                    diagnostics.add(
-                        "Subtitle tracks: media=${session.mediaId} total=${freshTracks.size} " +
-                            "compatible=${freshTracks.count { it.compatible }} " +
-                            "chosen=${track?.language ?: "none"}"
-                    )
-                    freshTimeline = track?.let { provider.subtitleTimeline(session.mediaId, it) }
-                } else {
-                    val wantedTrackId = preferredTrackId(session.mediaId)
-                    if (track == null || (wantedTrackId.isNotEmpty() && wantedTrackId != track.id)) {
-                        freshTracks = provider.subtitleTracks(session.mediaId)
-                        if (!isCurrentPlayback(provider, generation)) return@execute
-                        track = chooseTrack(session.mediaId, freshTracks)
-                        freshTimeline = track?.let { provider.subtitleTimeline(session.mediaId, it) }
+                    runOnUiThread {
+                        if (!isCurrentPlayback(provider, generation)) return@runOnUiThread
+                        publishSubtitlePendingState(
+                            freshSessions,
+                            session,
+                            freshTracks,
+                            track,
+                            position,
+                            "Downloading subtitles…",
+                        )
+                    }
+                    freshTimeline = provider.subtitleTimeline(session.mediaId, track!!)
+                    if (loadGeneration != subtitleLoadGeneration) {
+                        diagnostics.add(
+                            "Discarding stale subtitle load: media=${session.mediaId} track=${track.id}"
+                        )
+                        pendingSubtitleReload = true
+                        return@execute
                     }
                 }
 
@@ -1110,6 +1132,10 @@ class MainActivity : Activity() {
                 }
             } finally {
                 pollInFlight = false
+                if (pendingSubtitleReload && isCurrentPlayback(provider, generation)) {
+                    pendingSubtitleReload = false
+                    runOnUiThread { pollOnce() }
+                }
             }
         }
     }
@@ -1145,6 +1171,34 @@ class MainActivity : Activity() {
         return "track_${provider}_$mediaId"
     }
 
+    private fun publishSubtitlePendingState(
+        freshSessions: List<PlaybackSession>,
+        session: PlaybackSession,
+        freshTracks: List<SubtitleTrack>,
+        track: SubtitleTrack?,
+        position: Double,
+        status: String,
+    ) {
+        sessions = freshSessions
+        selectedSession = session
+        tracks = freshTracks
+        tracksMediaId = session.mediaId
+        selectedTrack = track
+        timeline = null
+
+        titleView.text = session.title
+        stateView.text = status
+        sessionButton.text = session.displayClient()
+        subtitleButton.text = when {
+            track != null -> track.label()
+            freshTracks.isEmpty() -> "No subtitles"
+            else -> "Choose subtitles"
+        }
+        subtitleButton.isEnabled = freshTracks.isNotEmpty()
+        currentSubtitleView.text = ""
+        nextSubtitleView.text = ""
+    }
+
     private fun applyPlaybackState(
         freshSessions: List<PlaybackSession>,
         session: PlaybackSession,
@@ -1156,6 +1210,7 @@ class MainActivity : Activity() {
         sessions = freshSessions
         selectedSession = session
         tracks = freshTracks
+        tracksMediaId = session.mediaId
         selectedTrack = track
         timeline = freshTimeline
         loadedMediaId = session.mediaId
@@ -1300,8 +1355,14 @@ class MainActivity : Activity() {
                     if (which == 0) remove(trackPreferenceKey(session.mediaId))
                     else putString(trackPreferenceKey(session.mediaId), compatible[which - 1].id)
                 }.apply()
-                selectedTrack = null
+                val requestedTrack = if (which == 0) {
+                    chooseTrack(session.mediaId, compatible)
+                } else {
+                    compatible[which - 1]
+                }
+                selectedTrack = requestedTrack
                 timeline = null
+                subtitleLoadGeneration++
                 dialog.dismiss()
                 val subtitleToast = if (which == 0) {
                     "Subtitles set to automatic"
@@ -1309,7 +1370,9 @@ class MainActivity : Activity() {
                     "Subtitles: ${compatible[which - 1].label()}"
                 }
                 Toast.makeText(this, subtitleToast, Toast.LENGTH_SHORT).show()
-                pollOnce()
+                stateView.text = "Downloading subtitles…"
+                subtitleButton.text = requestedTrack?.label() ?: "Choose subtitles"
+                if (pollInFlight) pendingSubtitleReload = true else pollOnce()
             }
             .setNegativeButton("Cancel", null)
             .show()
@@ -2037,7 +2100,10 @@ class MainActivity : Activity() {
 
     private fun clearLoadedSubtitle() {
         loadedMediaId = ""
+        tracksMediaId = ""
         deferredSubtitleMediaId = ""
+        subtitleLoadGeneration++
+        pendingSubtitleReload = false
         tracks = emptyList()
         selectedTrack = null
         timeline = null
