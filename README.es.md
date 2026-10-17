@@ -131,13 +131,13 @@ La interfaz trabaja con modelos genéricos de reproducción y subtítulos, mient
 
 Actualmente Plex y Jellyfin están implementados.
 
-## Cliente Docker / Web — experimental
+## Cliente Docker / Web — prototipo experimental
 
-SideSubs también incluye un cliente Docker/Web para utilizarlo desde un navegador.
+El cliente Docker/Web es un **prototipo experimental pensado principalmente para pruebas y experimentación en entornos self-hosted**.
 
-Funciona de forma independiente de la aplicación Android y puede ser útil en portátiles, tablets, ordenadores de sobremesa u otros dispositivos en los que no resulte práctico instalar la aplicación Android.
+No incluye todas las funciones disponibles en la aplicación Android y, por ahora, no se busca mantener paridad completa entre ambas versiones. La aplicación nativa para Android es la experiencia principal de SideSubs y la que recibe el desarrollo completo de funcionalidades.
 
-No se garantiza que tenga exactamente las mismas funciones que la aplicación Android.
+El cliente Docker/Web funciona de forma independiente de la aplicación Android y puede seguir siendo útil para probar SideSubs desde un navegador o experimentar con una instalación self-hosted.
 
 ### Imagen Docker
 
