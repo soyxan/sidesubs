@@ -131,13 +131,13 @@ The UI works with generic playback and subtitle models, while Plex-specific iden
 
 Plex and Jellyfin are currently implemented.
 
-## Docker / Web client — experimental
+## Docker / Web client — experimental prototype
 
-SideSubs also includes a Docker/Web client for browser-based use.
+The Docker/Web client is an **experimental prototype intended mainly for testing and self-hosted experimentation**.
 
-It runs independently from the Android application and can be useful on laptops, tablets, desktops or other devices where installing the Android app is not practical.
+It does not include all the features available in the Android app, and feature parity with Android is not a goal at this stage. The native Android app is the primary SideSubs experience and receives the complete feature development.
 
-Feature parity with Android is not guaranteed.
+The Docker/Web client runs independently from the Android application and can still be useful for testing SideSubs from a browser or experimenting with a self-hosted setup.
 
 ### Docker image
 
