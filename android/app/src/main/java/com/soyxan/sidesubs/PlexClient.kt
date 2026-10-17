@@ -184,6 +184,13 @@ class PlexClient(
                 "subtitleStreamID" to streamId.toString(),
             )
 
+            if (track.codec in ADVANCED_TEXT_SUBTITLE_CODECS) {
+                common["advancedSubtitles"] = "text"
+                diagnostics.add(
+                    "Requesting Plex text conversion for embedded ${track.codec.uppercase(Locale.US)} subtitle"
+                )
+            }
+
             diagnostics.add("Requesting Plex subtitle transcode decision")
             request(
                 method = "GET",
@@ -575,6 +582,7 @@ class PlexClient(
         const val SELECTION_RESTORE_ATTEMPTS = 4
         val SELECTION_VERIFY_DELAYS_MS = longArrayOf(100, 250)
         val SELECTION_RESTORE_DELAYS_MS = longArrayOf(100, 250, 750)
+        val ADVANCED_TEXT_SUBTITLE_CODECS = setOf("ass", "ssa")
         val TEXT_SUBTITLE_CODECS = setOf("subrip", "srt", "ass", "ssa", "webvtt", "vtt", "mov_text", "text")
     }
 }
